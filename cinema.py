@@ -78,7 +78,8 @@ THEATERS = [
      "kind": "lotte", "cid": "1|0101|2004"},
     {"key": "megabox-seomyeon", "name": "메가박스 서면대한",
      "kind": "megabox", "brch": "0082", "on": True},
-    # 모퉁이극장. 사이트 응답 구조를 확인한 뒤 on 을 True 로 바꾸세요.
+    # 모퉁이극장(dtryx). 브라우저에서는 열리는데 서버에서는 연결이 끊깁니다.
+    # Render 에서도 ConnectTimeout 이라 국내 IP 만 받는 것으로 보입니다.
     {"key": "mtgi", "name": "모퉁이극장", "kind": "mtgi", "on": False},
 ]
 

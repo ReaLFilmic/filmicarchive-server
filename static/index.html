@@ -15190,22 +15190,6 @@ window.addEventListener("message", function (e) {
       </div>
 
       <div class="grp">
-        <div class="lab">이동 여유</div>
-        <div class="rng">
-          <input type="range" id="buf" min="0" max="30" step="5" value="10">
-          <span class="val" id="bufv">10분</span>
-        </div>
-      </div>
-
-      <div class="grp">
-        <div class="lab">극장 간 이동시간
-          <button class="tinyb" id="travelreset">기본값으로</button></div>
-        <div id="travel"></div>
-        <p class="tnote">두 극장 사이를 실제로 오가는 데 걸리는 시간입니다.
-          예매하려는 극장에 맞게 고치면 충돌 판정이 정확해집니다.</p>
-      </div>
-
-      <div class="grp">
         <p class="tnote" id="syncLog"></p>
 
         <details class="paste" id="pasteBox">
@@ -15293,10 +15277,12 @@ window.addEventListener("message", function (e) {
     return 20;                                        // 모르는 사이는 중간값. 표에서 고치면 됩니다.
   }
 
+  /* 극장 간 이동시간은 쓰지 않습니다.
+     극장마다 위치·교통편이 달라 임의의 기본값(20분)이 오히려 잘못된
+     충돌 판정을 만들었습니다. 시간이 겹치는지만 봅니다.
+     되살리려면 아래 return 0 을 지우면 됩니다. */
   function travel(a, b){
-    if (a === b) return 0;
-    var k = pairKey(a, b);
-    return (k in TRAVEL_MAP) ? TRAVEL_MAP[k] : defaultTravel(a, b);
+    return 0;
   }
 
   // ---------- 표본 시간표 ----------
@@ -15316,7 +15302,7 @@ window.addEventListener("message", function (e) {
     "숨어드는 산,영화의전당 인디플러스,09-04,19:50,106,3"
   ].join("\n");
 
-  var S = [], DAYS = [], day = null, picked = {}, BUF = 10;
+  var S = [], DAYS = [], day = null, picked = {}, BUF = 0;
   var $ = function(id){ return document.getElementById(id); };
 
   // ---------- CSV ----------
@@ -15710,7 +15696,7 @@ window.addEventListener("message", function (e) {
     x.font = "12px 'Noto Sans KR', sans-serif";
     var picks = todays.filter(function (s) { return picked[s.id]; }).length;
     x.fillText(todays.length + "회차" + (picks ? " · 담은 " + picks + "편" : "") +
-               " · 이동 여유 " + BUF + "분", PAD, 54);
+               "", PAD, 54);
 
     /* 극장 이름과 사이 이동시간 */
     x.font = "500 12px 'Noto Sans KR', sans-serif";
@@ -15775,7 +15761,7 @@ window.addEventListener("message", function (e) {
     /* 꼬리말 */
     x.fillStyle = DIM;
     x.font = "10px 'Noto Sans KR', sans-serif";
-    x.fillText("개인 영화 기록 서비스 · 이동시간을 반영한 관람 계획", PAD, H - 18);
+    x.fillText("개인 영화 기록 서비스 · 관람 계획", PAD, H - 18);
 
     return cv;
   }
@@ -15802,38 +15788,11 @@ window.addEventListener("message", function (e) {
     }, "image/png");
   });
 
-  function renderTravel(){
-    var vs = [];
-    S.forEach(function(x){ if (vs.indexOf(x.venue) < 0) vs.push(x.venue); });
-    vs.sort(function(a, b){
-      var ia = ORDER.indexOf(a), ib = ORDER.indexOf(b);
-      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
-    });
+  /* 이동시간 설정 칸을 없앴으므로 그릴 것이 없습니다.
+     부르는 곳이 여럿이라 함수는 남겨 둡니다. */
+  function renderTravel(){}
 
-    var rows = [];
-    for (var i = 0; i < vs.length; i++){
-      for (var j = i + 1; j < vs.length; j++){
-        var k = pairKey(vs[i], vs[j]);
-        rows.push('<div class="trow"><span class="a">' + vs[i] +
-          ' <span style="color:var(--dim)">↔</span> ' + vs[j] + '</span>' +
-          '<input type="number" min="0" max="180" step="5" value="' + travel(vs[i], vs[j]) +
-          '" data-pair="' + k + '" aria-label="' + vs[i] + ' 에서 ' + vs[j] + ' 까지 이동시간(분)">' +
-          '<span class="u">분</span></div>');
-      }
-    }
-    $("travel").innerHTML = rows.length ? rows.join("")
-      : '<p class="tnote">극장이 한 곳뿐이라 이동시간이 필요 없습니다.</p>';
-
-    Array.prototype.forEach.call($("travel").querySelectorAll("[data-pair]"), function(inp){
-      inp.addEventListener("input", function(){
-        var v = parseInt(inp.value, 10);
-        TRAVEL_MAP[inp.dataset.pair] = isNaN(v) ? 0 : Math.max(0, v);
-        renderBoard();       // 표 머리의 이동시간 띠도 함께 갱신됩니다
-      });
-    });
-  }
-
-  $("travelreset").addEventListener("click", function(){
+  if ($("travelreset")) $("travelreset").addEventListener("click", function(){
     TRAVEL_MAP = {};
     renderTravel(); renderBoard();
     say("이동시간을 기본값으로 되돌렸습니다.");
@@ -16136,7 +16095,7 @@ window.addEventListener("message", function (e) {
     catch(e){ flash("CSV를 읽지 못했습니다. 첫 줄의 항목 이름과 쉼표 개수를 확인해보세요.", "bad"); }
   });
 
-  $("buf").addEventListener("input", function(){
+  if ($("buf")) $("buf").addEventListener("input", function(){
     BUF = parseInt(this.value,10); $("bufv").textContent = BUF+"분"; renderBoard();
   });
 
@@ -16724,22 +16683,6 @@ window.addEventListener("message", function (e) {
       </div>
 
       <div class="grp">
-        <div class="lab">이동 여유</div>
-        <div class="rng">
-          <input type="range" id="buf" min="0" max="30" step="5" value="10">
-          <span class="val" id="bufv">10분</span>
-        </div>
-      </div>
-
-      <div class="grp">
-        <div class="lab">극장 간 이동시간
-          <button class="tinyb" id="travelreset">기본값으로</button></div>
-        <div id="travel"></div>
-        <p class="tnote">두 극장 사이를 실제로 오가는 데 걸리는 시간입니다.
-          예매하려는 극장에 맞게 고치면 충돌 판정이 정확해집니다.</p>
-      </div>
-
-      <div class="grp">
       </div>
 
       <div class="grp">
@@ -16789,10 +16732,12 @@ window.addEventListener("message", function (e) {
     return 20;                                        // 모르는 사이는 중간값. 표에서 고치면 됩니다.
   }
 
+  /* 극장 간 이동시간은 쓰지 않습니다.
+     극장마다 위치·교통편이 달라 임의의 기본값(20분)이 오히려 잘못된
+     충돌 판정을 만들었습니다. 시간이 겹치는지만 봅니다.
+     되살리려면 아래 return 0 을 지우면 됩니다. */
   function travel(a, b){
-    if (a === b) return 0;
-    var k = pairKey(a, b);
-    return (k in TRAVEL_MAP) ? TRAVEL_MAP[k] : defaultTravel(a, b);
+    return 0;
   }
 
   // ---------- 표본 시간표 ----------
@@ -16825,7 +16770,7 @@ window.addEventListener("message", function (e) {
     "반지의 제왕: 왕의 귀환,영화의전당 중극장,10-18,17:30,201,4"
   ].join("\n");
 
-  var S = [], DAYS = [], day = null, picked = {}, BUF = 10;
+  var S = [], DAYS = [], day = null, picked = {}, BUF = 0;
   var $ = function(id){ return document.getElementById(id); };
 
   // ---------- CSV ----------
@@ -17138,7 +17083,7 @@ window.addEventListener("message", function (e) {
     x.font = "12px 'Noto Sans KR', sans-serif";
     var picks = todays.filter(function (s) { return picked[s.id]; }).length;
     x.fillText(todays.length + "회차" + (picks ? " · 담은 " + picks + "편" : "") +
-               " · 이동 여유 " + BUF + "분", PAD, 54);
+               "", PAD, 54);
 
     /* 극장 이름과 사이 이동시간 */
     x.font = "500 12px 'Noto Sans KR', sans-serif";
@@ -17203,7 +17148,7 @@ window.addEventListener("message", function (e) {
     /* 꼬리말 */
     x.fillStyle = DIM;
     x.font = "10px 'Noto Sans KR', sans-serif";
-    x.fillText("개인 영화 기록 서비스 · 이동시간을 반영한 관람 계획", PAD, H - 18);
+    x.fillText("개인 영화 기록 서비스 · 관람 계획", PAD, H - 18);
 
     return cv;
   }
@@ -17230,38 +17175,11 @@ window.addEventListener("message", function (e) {
     }, "image/png");
   });
 
-  function renderTravel(){
-    var vs = [];
-    S.forEach(function(x){ if (vs.indexOf(x.venue) < 0) vs.push(x.venue); });
-    vs.sort(function(a, b){
-      var ia = ORDER.indexOf(a), ib = ORDER.indexOf(b);
-      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
-    });
+  /* 이동시간 설정 칸을 없앴으므로 그릴 것이 없습니다.
+     부르는 곳이 여럿이라 함수는 남겨 둡니다. */
+  function renderTravel(){}
 
-    var rows = [];
-    for (var i = 0; i < vs.length; i++){
-      for (var j = i + 1; j < vs.length; j++){
-        var k = pairKey(vs[i], vs[j]);
-        rows.push('<div class="trow"><span class="a">' + vs[i] +
-          ' <span style="color:var(--dim)">↔</span> ' + vs[j] + '</span>' +
-          '<input type="number" min="0" max="180" step="5" value="' + travel(vs[i], vs[j]) +
-          '" data-pair="' + k + '" aria-label="' + vs[i] + ' 에서 ' + vs[j] + ' 까지 이동시간(분)">' +
-          '<span class="u">분</span></div>');
-      }
-    }
-    $("travel").innerHTML = rows.length ? rows.join("")
-      : '<p class="tnote">극장이 한 곳뿐이라 이동시간이 필요 없습니다.</p>';
-
-    Array.prototype.forEach.call($("travel").querySelectorAll("[data-pair]"), function(inp){
-      inp.addEventListener("input", function(){
-        var v = parseInt(inp.value, 10);
-        TRAVEL_MAP[inp.dataset.pair] = isNaN(v) ? 0 : Math.max(0, v);
-        renderBoard();       // 표 머리의 이동시간 띠도 함께 갱신됩니다
-      });
-    });
-  }
-
-  $("travelreset").addEventListener("click", function(){
+  if ($("travelreset")) $("travelreset").addEventListener("click", function(){
     TRAVEL_MAP = {};
     renderTravel(); renderBoard();
     say("이동시간을 기본값으로 되돌렸습니다.");
@@ -17503,7 +17421,7 @@ window.addEventListener("message", function (e) {
     catch(e){ flash("CSV를 읽지 못했습니다. 첫 줄의 항목 이름과 쉼표 개수를 확인해보세요.", "bad"); }
   });
 
-  $("buf").addEventListener("input", function(){
+  if ($("buf")) $("buf").addEventListener("input", function(){
     BUF = parseInt(this.value,10); $("bufv").textContent = BUF+"분"; renderBoard();
   });
 
