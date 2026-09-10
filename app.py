@@ -4,6 +4,7 @@ import os
 from flask import Flask, jsonify, session, redirect, url_for, request
 from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import db
 
@@ -11,6 +12,7 @@ load_dotenv()
 
 # static_url_path="" — static 폴더의 파일을 주소 맨 위에서 바로 내보냅니다
 app = Flask(__name__, static_folder="static", static_url_path="")
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 app.json.ensure_ascii = False
 
 # 쿠키에 서명하는 데 쓰는 열쇠. 이게 없으면 session 을 쓸 수 없습니다.
@@ -36,8 +38,10 @@ def home():
 
 @app.route("/login")
 def login():
-    # 구글 로그인 화면으로 보냅니다. 돌아올 주소를 함께 알려줍니다.
-    return google.authorize_redirect(url_for("callback", _external=True))
+    return google.authorize_redirect(
+        url_for("callback", _external=True),
+        prompt="select_account",        # 늘 계정 선택 화면을 보여줍니다
+    )
 
 
 @app.route("/callback")
