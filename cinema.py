@@ -62,7 +62,7 @@ THEATERS = [
     # CGV 는 서버 IP 를 보고 막는 경우가 있습니다. 막히면 아래 줄의
     # "on" 을 False 로 바꾸면 나머지 세 곳만 받아옵니다.
     {"key": "cgv-seomyeon", "name": "CGV 서면", "kind": "cgv",
-     "site": "0005", "on": True},
+     "site": "0005", "on": False},
     {"key": "lotte-gwangbok", "name": "롯데시네마 광복",
      "kind": "lotte", "cid": "1|0101|2009"},
     {"key": "lotte-busan", "name": "롯데시네마 부산본점",
