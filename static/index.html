@@ -5234,6 +5234,12 @@ window.addEventListener("message", function (e) {
   .rev b{font-size:12px;font-weight:500;color:var(--paper)}
   .rev .rs{font-size:10.5px;color:var(--lamp);margin-left:7px}
   .rev .rd{font-size:10.5px;color:var(--dim);margin-left:7px}
+  .rev.mine{border-left:2px solid var(--lamp);padding-left:9px}
+  .rev .me{font-size:10.5px;color:var(--lamp);margin-left:6px}
+  .rev .hid{cursor:pointer;color:var(--dim)}
+  .rev .hid em{display:none}
+  .revnone{font-size:12.5px;color:var(--dim);padding:8px 2px 12px}
+  .revhead.t2{margin-top:16px}
   .rev p{margin:4px 0 0;font-size:11.5px;line-height:1.75;color:#B5AC97}
   .loading{padding:46px 22px;text-align:center;border:1px dashed var(--edge);
     border-radius:6px;color:var(--dim);font-size:13px}
@@ -6209,7 +6215,7 @@ window.addEventListener("message", function (e) {
       '<div class="grid2">'+
         '<div class="card">'+
           '<h3>코멘트</h3>'+
-          '<textarea id="cm" maxlength="500" placeholder="이 영화에 대해 남기고 싶은 말을 적어보세요.">'+
+          '<textarea id="cm" maxlength="4000" placeholder="이 영화에 대해 남기고 싶은 말을 적어보세요.">'+
             (r.comment||"")+'</textarea>'+
           '<div class="cfoot">'+
             '<label class="spoil"><input type="checkbox" id="sp"'+(r.spoiler?' checked':'')+
@@ -6244,31 +6250,66 @@ window.addEventListener("message", function (e) {
   }
 
   /* 다른 사람의 감상 — TMDB 에 올라온 것 중 100자가 넘는 것만. */
+  /* 남의 글을 그대로 화면에 꽂으면 안 됩니다. 코멘트는 남이 쓴 값이라
+     <script> 같은 태그가 섞여 들어올 수 있습니다. */
+  function esc(t){
+    return String(t == null ? "" : t)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  function oneComment(r){
+    var body = r.spoiler && !r.mine
+      ? '<p class="hid" tabindex="0">스포일러 — 눌러서 보기<em>' + esc(r.text) + '</em></p>'
+      : "<p>" + esc(r.text) + "</p>";
+    return '<div class="rev' + (r.mine ? " mine" : "") + '">' +
+      "<b>" + esc(r.who) + "</b>" +
+      (r.mine ? '<span class="me">내 글</span>' : "") +
+      (r.score ? '<span class="rs">\u2605 ' + r.score + "</span>" : "") +
+      (r.at ? '<span class="rd">' + esc(r.at) + "</span>" : "") +
+      body + "</div>";
+  }
+
   function loadReviews(f){
     var box = document.getElementById("revbox");
     if (!box || box.dataset.done || !f) return;
     box.dataset.done = "1";
     var tid = f.tmdbId || (APP.media[f.id] && APP.media[f.id].tmdbId);
     if (!tid) return;
-    box.innerHTML = '<div class="revhead">다른 사람의 감상 <span>불러오는 중…</span></div>';
-    APP.reviews(tid, 30).then(function(list){
-      if (!list.length) {
-        box.innerHTML = '<div class="revhead">다른 사람의 감상 ' +
-          '<span>30자 넘는 글이 없습니다</span></div>';
-        return;
+    box.innerHTML = '<div class="revhead">감상 <span>불러오는 중…</span></div>';
+
+    /* 우리 사용자 글과 TMDB 리뷰를 함께 받아옵니다.
+       한쪽이 실패해도 다른 쪽은 보여야 하므로 각각 실패를 흡수합니다. */
+    Promise.all([
+      APP.comments(tid).catch(function(){ return []; }),
+      APP.reviews(tid, 0).catch(function(){ return []; })
+    ]).then(function(res){
+      var mine = res[0] || [], tmdb = res[1] || [];
+      var html = "";
+
+      html += '<div class="revhead">이곳의 감상 <span>' +
+        (mine.length ? mine.length + "개" : "아직 없습니다") + "</span></div>";
+      if (mine.length) html += mine.map(oneComment).join("");
+      else html += '<div class="revnone">첫 코멘트를 남겨보세요.</div>';
+
+      if (tmdb.length) {
+        html += '<div class="revhead t2">TMDB 감상 <span>' + tmdb.length + "개</span></div>" +
+          tmdb.map(function(r){
+            var t = r.text.length > 420 ? r.text.slice(0, 420) + "\u2026" : r.text;
+            return '<div class="rev"><b>' + esc(r.who) + "</b>" +
+              (r.score ? '<span class="rs">\u2605 ' + r.score + "/10</span>" : "") +
+              (r.at ? '<span class="rd">' + esc(r.at) + "</span>" : "") +
+              "<p>" + esc(t) + "</p></div>";
+          }).join("");
       }
-      box.innerHTML = '<div class="revhead">다른 사람의 감상 <span>TMDB · ' +
-        list.length + '편</span></div>' +
-        list.map(function(r){
-          var t = r.text.length > 420 ? r.text.slice(0, 420) + "…" : r.text;
-          return '<div class="rev"><b>' + r.who + "</b>" +
-            (r.score ? '<span class="rs">★ ' + r.score + "/10</span>" : "") +
-            (r.at ? '<span class="rd">' + r.at + "</span>" : "") +
-            "<p>" + t + "</p></div>";
-        }).join("");
-    }).catch(function(e){
-      box.innerHTML = '<div class="revhead">다른 사람의 감상 <span>' +
-        (e && e.message ? e.message : "불러오지 못했습니다") + "</span></div>";
+      box.innerHTML = html;
+
+      /* 스포일러는 눌러서 펼칩니다. */
+      Array.prototype.forEach.call(box.querySelectorAll(".hid"), function(p){
+        p.addEventListener("click", function(){
+          p.outerHTML = "<p>" + p.querySelector("em").innerHTML + "</p>";
+        });
+      });
     });
   }
 
@@ -18742,10 +18783,20 @@ function film(id) { return FILM_BY_ID[id]; }
 
   /* TMDB 에 올라온 다른 이용자의 리뷰. 영어권 글이 대부분이고 한국 영화는 거의 없습니다.
      짧은 한 줄 평은 빼고 어느 정도 길이가 되는 것만 돌려줍니다. */
+  /* 우리 사이트 사용자들이 남긴 코멘트. 로그인 없이도 읽힙니다. */
+  APP.comments = function (tmdbId) {
+    if (!tmdbId) return Promise.resolve([]);
+    return fetch("/api/comments?tmdb_id=" + tmdbId, { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : []; })
+      .catch(function () { return []; });
+  };
+
   APP.reviews = function (tmdbId, minLen) {
     var key = ($("key").value || "").replace(/\s+/g, "");
     if (!tmdbId || key.length < 20) return Promise.resolve([]);
-    var lo = minLen || 30;
+    /* 예전에는 30자 미만을 버렸습니다. 짧은 한 줄 평도 보여 달라는 요청에
+       따라 기본값을 0 으로 두어 전부 돌려줍니다. */
+    var lo = minLen || 0;
     return retry(function () {
       return tmdb("/movie/" + tmdbId + "/reviews", auth(key), "");
     }, 2).then(function (d) {

@@ -4,7 +4,6 @@ import os
 from flask import Flask, jsonify, session, redirect, url_for, request
 from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
-from werkzeug.middleware.proxy_fix import ProxyFix
 
 import db
 
@@ -12,15 +11,10 @@ load_dotenv()
 
 # static_url_path="" — static 폴더의 파일을 주소 맨 위에서 바로 내보냅니다
 app = Flask(__name__, static_folder="static", static_url_path="")
-app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 app.json.ensure_ascii = False
 
 # 쿠키에 서명하는 데 쓰는 열쇠. 이게 없으면 session 을 쓸 수 없습니다.
 app.secret_key = os.environ["FLASK_SECRET"]
-app.config.update(
-    SESSION_COOKIE_SAMESITE="Lax",   # 구글에서 돌아올 때 쿠키가 실려오게
-    SESSION_COOKIE_HTTPONLY=True,    # 자바스크립트가 쿠키를 못 읽게
-)
 
 oauth = OAuth(app)
 google = oauth.register(
@@ -42,10 +36,9 @@ def home():
 
 @app.route("/login")
 def login():
-    return google.authorize_redirect(
-        url_for("callback", _external=True),
-        prompt="select_account",        # 늘 계정 선택 화면을 보여줍니다
-    )
+    # 구글 로그인 화면으로 보냅니다. 돌아올 주소를 함께 알려줍니다.
+    return google.authorize_redirect(url_for("callback", _external=True))
+
 
 @app.route("/callback")
 def callback():
@@ -66,7 +59,7 @@ def callback():
         conn.commit()
 
     session["user_id"] = uid          # 번호표 발급
-    return redirect("/")
+    return redirect("/me")
 
 
 @app.route("/me")
@@ -154,7 +147,7 @@ def save_record(uid):
 
     comment = body.get("comment")
     if comment is not None:
-        comment = str(comment)[:1000]
+        comment = str(comment)[:4000]
 
     status = body.get("status")
     if status is not None:
@@ -230,6 +223,47 @@ def set_nickname(uid):
         conn.commit()
 
     return jsonify({"ok": True, "nickname": nick})
+
+
+
+@app.route("/api/comments")
+def public_comments():
+    """한 작품에 달린 다른 사람들의 코멘트.
+       로그인하지 않아도 읽을 수 있게 문지기를 붙이지 않습니다."""
+    try:
+        tmdb_id = int(request.args.get("tmdb_id", ""))
+    except ValueError:
+        return jsonify({"error": "tmdb_id 가 필요합니다"}), 400
+
+    me = session.get("user_id")
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            # 닉네임을 정하지 않은 사람의 글은 보여주지 않습니다.
+            # 커뮤니티에 이름 없는 글이 섞이면 누가 썼는지 알 수 없습니다.
+            cur.execute(
+                "SELECT u.nickname, r.score, r.comment, r.spoiler, r.watched_at, "
+                "       (r.user_id = %s) AS mine "
+                "FROM records r JOIN users u ON u.id = r.user_id "
+                "WHERE r.tmdb_id = %s "
+                "  AND r.comment IS NOT NULL AND btrim(r.comment) <> '' "
+                "  AND u.nickname IS NOT NULL "
+                "ORDER BY r.updated_at DESC LIMIT 50",
+                (me, tmdb_id),
+            )
+            rows = cur.fetchall()
+
+    return jsonify([
+        {
+            "who": r[0],
+            "score": float(r[1]) if r[1] is not None else None,
+            "text": r[2],
+            "spoiler": bool(r[3]),
+            "at": r[4].isoformat() if r[4] else None,
+            "mine": bool(r[5]),
+        }
+        for r in rows
+    ])
 
 
 @app.route("/logout")
