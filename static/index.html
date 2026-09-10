@@ -14508,6 +14508,12 @@ window.addEventListener("message", function (e) {
   .houses button[aria-pressed="true"]{background:var(--lamp);border-color:var(--lamp);
     color:#2A1C08;font-weight:600}
   .empty{padding:26px 4px;font-size:13px;color:var(--dim)}
+  /* 잔여좌석 */
+  .scr em{font-style:normal;font-size:9.5px;padding:0 3px;border-radius:3px;
+    background:rgba(255,255,255,.10);margin-left:2px;white-space:nowrap}
+  .scr i{display:block;line-height:1.45}
+  .scr em.few{background:rgba(227,140,70,.30);color:#F0C89A}
+  .scr em.sold{background:rgba(163,74,64,.35);color:#E8A9A2}
   .lanes{flex:1;display:flex;position:relative}
   .lane{flex:1;min-width:92px;position:relative;border-left:1px solid #241F17}
   .hr{position:absolute;left:0;right:0;border-top:1px solid #201B14}
@@ -15354,10 +15360,28 @@ window.addEventListener("message", function (e) {
         date:  g("date"),
         start: parseInt(hm[0],10)*60 + parseInt(hm[1],10),
         runtime: parseInt(g("runtime"),10),
-        priority: parseInt(g("priority"),10) || 1
+        priority: parseInt(g("priority"),10) || 1,
+        /* 잔여좌석. CGV·롯데만 주고 영화의전당은 빈 값입니다.
+           빈 값과 "0석 남음" 은 다른 상태라 null 로 구분합니다. */
+        left: g("seatsLeft") === "" ? null : parseInt(g("seatsLeft"), 10),
+        total: g("seatsTotal") === "" ? null : parseInt(g("seatsTotal"), 10)
       });
     });
     return out;
+  }
+
+  /* 잔여좌석 표시. 매진과 임박을 눈에 띄게 갈라 줍니다.
+     받은 시각을 알 수 없으면 오해를 부르므로, 화면 아래에 기준 시각을
+     함께 적어 둡니다(syncNote). */
+  function seatTag(s){
+    if (s.left === null || isNaN(s.left)) return "";
+    if (s.left <= 0) return ' <em class="sold">매진</em>';
+    /* 칸이 좁아 "318석" 은 줄바꿈으로 잘립니다. 숫자만 쓰고
+       마우스를 올리면 전체를 보여 줍니다. */
+    var cls = s.left <= 10 ? " few" : "";
+    var t = s.total ? s.left + "/" + s.total : String(s.left);
+    return ' <em class="seat' + cls + '" title="남은 좌석 ' + t + '석">'
+      + s.left + '</em>';
   }
 
   function hhmm(m){
@@ -15997,7 +16021,7 @@ window.addEventListener("message", function (e) {
         return '<div class="scr '+cls+'" data-id="'+s.id+'" role="button" tabindex="0" '+
                'style="top:'+top+'px;height:'+h+'px">'+
                "<b>"+s.title+"</b><i>"+hhmm(s.start)+"–"+hhmm(endOf(s))+" · "+s.runtime+"분"+
-               " · ★"+s.priority+"</i></div>";
+               " · ★"+s.priority+seatTag(s)+"</i></div>";
       }).join("");
       return '<div class="lane">'+hrs+items+"</div>";
     }).join("");
@@ -16198,6 +16222,12 @@ window.addEventListener("message", function (e) {
   .body{display:flex;position:relative}
   .gut{width:44px;flex:none;position:relative}
   .gut span{position:absolute;right:6px;font-size:9.5px;color:#5E564A;transform:translateY(-50%)}
+  /* 잔여좌석 */
+  .scr em{font-style:normal;font-size:9.5px;padding:0 3px;border-radius:3px;
+    background:rgba(255,255,255,.10);margin-left:2px;white-space:nowrap}
+  .scr i{display:block;line-height:1.45}
+  .scr em.few{background:rgba(227,140,70,.30);color:#F0C89A}
+  .scr em.sold{background:rgba(163,74,64,.35);color:#E8A9A2}
   .lanes{flex:1;display:flex;position:relative}
   .lane{flex:1;min-width:92px;position:relative;border-left:1px solid #241F17}
   .hr{position:absolute;left:0;right:0;border-top:1px solid #201B14}
@@ -16839,10 +16869,28 @@ window.addEventListener("message", function (e) {
         date:  g("date"),
         start: parseInt(hm[0],10)*60 + parseInt(hm[1],10),
         runtime: parseInt(g("runtime"),10),
-        priority: parseInt(g("priority"),10) || 1
+        priority: parseInt(g("priority"),10) || 1,
+        /* 잔여좌석. CGV·롯데만 주고 영화의전당은 빈 값입니다.
+           빈 값과 "0석 남음" 은 다른 상태라 null 로 구분합니다. */
+        left: g("seatsLeft") === "" ? null : parseInt(g("seatsLeft"), 10),
+        total: g("seatsTotal") === "" ? null : parseInt(g("seatsTotal"), 10)
       });
     });
     return out;
+  }
+
+  /* 잔여좌석 표시. 매진과 임박을 눈에 띄게 갈라 줍니다.
+     받은 시각을 알 수 없으면 오해를 부르므로, 화면 아래에 기준 시각을
+     함께 적어 둡니다(syncNote). */
+  function seatTag(s){
+    if (s.left === null || isNaN(s.left)) return "";
+    if (s.left <= 0) return ' <em class="sold">매진</em>';
+    /* 칸이 좁아 "318석" 은 줄바꿈으로 잘립니다. 숫자만 쓰고
+       마우스를 올리면 전체를 보여 줍니다. */
+    var cls = s.left <= 10 ? " few" : "";
+    var t = s.total ? s.left + "/" + s.total : String(s.left);
+    return ' <em class="seat' + cls + '" title="남은 좌석 ' + t + '석">'
+      + s.left + '</em>';
   }
 
   function hhmm(m){
@@ -17341,7 +17389,7 @@ window.addEventListener("message", function (e) {
         return '<div class="scr '+cls+'" data-id="'+s.id+'" role="button" tabindex="0" '+
                'style="top:'+top+'px;height:'+h+'px">'+
                "<b>"+s.title+"</b><i>"+hhmm(s.start)+"–"+hhmm(endOf(s))+" · "+s.runtime+"분"+
-               " · ★"+s.priority+"</i></div>";
+               " · ★"+s.priority+seatTag(s)+"</i></div>";
       }).join("");
       return '<div class="lane">'+hrs+items+"</div>";
     }).join("");

@@ -120,19 +120,52 @@ def _fetch_dureraum(t, day):
     return rows
 
 
-def _fetch_cgv(t, day):
-    """CGV 는 requests 로 부르면 403 을 돌려줍니다. 헤더를 똑같이 맞춰도
-       막히는데, TLS 지문을 보고 파이썬 클라이언트를 걸러내는 것으로 보입니다.
-       curl 로는 같은 요청이 200 이라, curl 을 직접 실행해 받아옵니다."""
-    url = ("%s?coCd=A420&siteNo=%s&scnYmd=%s&rtctlScopCd=08"
-           % (CGV_URL, t["site"], day.replace("-", "")))
+def _cgv_curl(url):
+    """CGV 는 requests 로 부르면 403 입니다. 헤더를 똑같이 맞춰도 막히는데,
+       TLS 지문을 보고 파이썬 클라이언트를 걸러내는 것으로 보입니다.
+       curl 로는 같은 요청이 200 이라 curl 을 실행해 받아옵니다."""
     out = subprocess.run(
         ["curl", "-sS", "--compressed", "-m", str(TIMEOUT),
          "-A", UA, "-e", CGV_REF, "-H", "Accept: application/json", url],
         capture_output=True, timeout=TIMEOUT + 4)
     if out.returncode != 0:
-        raise RuntimeError("curl 실패: " + out.stderr.decode("utf-8", "replace")[:80])
-    data = (json.loads(out.stdout.decode("utf-8", "replace")) or {}).get("data") or []
+        raise RuntimeError("curl %d: %s" % (
+            out.returncode, out.stderr.decode("utf-8", "replace")[:90]))
+    return out.stdout.decode("utf-8", "replace")
+
+
+def _cgv_requests(url):
+    """curl 이 없는 환경을 위한 보조 경로. 막히면 예외를 냅니다."""
+    r = requests.get(url, headers={
+        "User-Agent": UA, "Referer": CGV_REF,
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "ko-KR,ko;q=0.9",
+    }, timeout=TIMEOUT)
+    if r.status_code != 200:
+        raise RuntimeError("requests HTTP %d" % r.status_code)
+    return r.text
+
+
+def _fetch_cgv(t, day):
+    url = ("%s?coCd=A420&siteNo=%s&scnYmd=%s&rtctlScopCd=08"
+           % (CGV_URL, t["site"], day.replace("-", "")))
+
+    # curl 을 먼저, 안 되면 requests 로. 둘 다 실패하면 사유를 모아 던집니다.
+    errs = []
+    body = None
+    for fn in (_cgv_curl, _cgv_requests):
+        try:
+            body = fn(url)
+            break
+        except Exception as e:
+            errs.append("%s=%s" % (fn.__name__.replace("_cgv_", ""), e))
+    if body is None:
+        raise RuntimeError("CGV 받기 실패 (" + " / ".join(errs) + ")")
+
+    try:
+        data = (json.loads(body) or {}).get("data") or []
+    except Exception:
+        raise RuntimeError("CGV 응답이 JSON 이 아닙니다: " + body[:70].replace("\n", " "))
 
     rows, seen = [], set()
     for it in data:
