@@ -66,15 +66,13 @@ THEATERS = [
     # CGV 는 서버 IP 를 보고 막는 경우가 있습니다. 막히면 아래 줄의
     # "on" 을 False 로 바꾸면 나머지 세 곳만 받아옵니다.
     {"key": "cgv-seomyeon", "name": "CGV 서면", "kind": "cgv",
-     "site": "0005", "on": False},
+     "site": "0005", "on": False},   # IP 차단 확인됨 (2026-09)
     {"key": "lotte-gwangbok", "name": "롯데시네마 광복",
      "kind": "lotte", "cid": "1|0101|2009"},
     {"key": "lotte-busan", "name": "롯데시네마 부산본점",
      "kind": "lotte", "cid": "1|0101|2004"},
-    # 메가박스는 아직 응답 구조를 확인하지 못했습니다.
-    # /api/cinema/diag 로 확인한 뒤 정규식을 맞추고 on 을 True 로 바꾸세요.
     {"key": "megabox-seomyeon", "name": "메가박스 서면대한",
-     "kind": "megabox", "brch": "0082", "on": False},
+     "kind": "megabox", "brch": "0082", "on": True},
 ]
 
 # ── 캐시 ────────────────────────────────────────────
@@ -241,13 +239,13 @@ def _fetch_lotte(t, day):
             continue
         seen.add(key)
 
-        # 롯데는 "예매된 수" 를 주므로 남은 수로 바꿔 줍니다
+        # BookingSeatCount 는 이름과 달리 "남은 좌석" 입니다.
+        # 09:30 상영이 135석 중 122 로 나오는데, 이걸 예매 수로 보면
+        # 아침부터 거의 매진이라는 말이 되어 앞뒤가 맞지 않습니다.
+        # 예전에는 Total 에서 빼서 남은 수를 거꾸로 표시했습니다.
         total = it.get("TotalSeatCount")
-        left = ""
-        try:
-            left = int(total) - int(it.get("BookingSeatCount"))
-        except Exception:
-            pass
+        left = it.get("BookingSeatCount")
+        left = "" if left is None else left
         rows.append([title, venue, day[5:], start, _mins(start, end), 3,
                      left, total if total is not None else ""])
     return rows
@@ -277,39 +275,88 @@ def _megabox_raw(brch, day):
     return r.text
 
 
-# 메가박스 HTML 한 회차를 뽑는 규칙.
-# 실제 구조를 확인하기 전이라 넉넉하게 잡아 두었습니다.
-MB_ROW = re.compile(
-    r'data-no="[^"]*"[\s\S]{0,400}?data-play-de="(\d{8})"'
-    r'[\s\S]{0,400}?data-play-strt-tm="(\d{2}:\d{2})"'
-    r'[\s\S]{0,400}?data-play-end-tm="(\d{2}:\d{2})"'
-    r'[\s\S]{0,600}?data-theab-nm="([^"]*)"'
-    r'[\s\S]{0,600}?data-movie-nm="([^"]*)"'
-)
+# 메가박스는 JSON 을 줍니다. 다만 회차가 megaMap 안 어디에 들어 있는지
+# 판마다 다를 수 있어, 구조를 훑어 "시각과 제목이 든 목록" 을 찾아냅니다.
+MB_TIME = re.compile(r"^\d{1,2}:\d{2}$")
+
+
+def _mb_pick(node, out):
+    """JSON 을 돌며 회차로 보이는 사전을 모읍니다.
+       시작 시각처럼 생긴 값과 제목처럼 생긴 값이 함께 있으면 회차로 봅니다."""
+    if isinstance(node, list):
+        for v in node:
+            _mb_pick(v, out)
+        return
+    if not isinstance(node, dict):
+        return
+
+    keys = {k.lower(): k for k in node}
+    def find(*names):
+        for n in names:
+            if n in keys:
+                return node[keys[n]]
+        return None
+
+    start = find("playstrttime", "playstrttm", "starttime", "playtm")
+    title = find("movienm", "moviename", "movienmkr", "rpstmovienm")
+    if start and title and MB_TIME.match(str(start).strip()):
+        out.append(node)
+        return
+
+    for v in node.values():
+        _mb_pick(v, out)
 
 
 def _fetch_megabox(t, day):
     body = _megabox_raw(t["brch"], day)
+    try:
+        data = json.loads(body)
+    except Exception:
+        raise RuntimeError("JSON 이 아닙니다: " + body[:80].replace("\n", " "))
 
-    rows, seen = [], set()
+    found = []
+    _mb_pick(data, found)
+    if not found:
+        raise RuntimeError("회차 목록을 못 찾았습니다 (응답 %d자). "
+                           "/api/cinema/diag 의 megabox 항목을 확인하세요." % len(body))
+
     want = day.replace("-", "")
-    for m in MB_ROW.finditer(body):
-        de, st, en, hall, title = m.groups()
-        if de != want:
-            continue                      # 응답이 여러 날을 주면 그날치만 씁니다
-        title = title.strip()
+    rows, seen = [], set()
+    for it in found:
+        keys = {k.lower(): k for k in it}
+        def g(*names):
+            for n in names:
+                if n in keys:
+                    return it[keys[n]]
+            return None
+
+        de = str(g("playde", "playdate", "playymd") or "").replace("-", "")
+        if de and de != want:
+            continue                        # 여러 날이 섞여 오면 그날치만
+        start = _hhmm(g("playstrttime", "playstrttm", "starttime", "playtm"))
+        if not start:
+            continue
+        end = _hhmm(g("playendtime", "playendtm", "endtime")) or start
+        title = str(g("movienm", "moviename", "movienmkr", "rpstmovienm") or "").strip()
         if not title:
             continue
-        venue = (t["name"] + " " + hall.strip()) if hall.strip() else t["name"]
-        key = (title, venue, st)
+        hall = str(g("theabnm", "theabname", "screennm", "theatnm") or "").strip()
+        venue = (t["name"] + " " + hall) if hall else t["name"]
+
+        key = (title, venue, start)
         if key in seen:
             continue
         seen.add(key)
-        rows.append([title, venue, day[5:], st, _mins(st, en), 3, "", ""])
+
+        # 남은 좌석. 이름이 여러 가지라 있는 대로 받습니다.
+        left = g("restseatcnt", "restseat", "frseatcnt", "reseatcnt")
+        total = g("totseatcnt", "totalseatcount", "seatcnt")
+        rows.append([title, venue, day[5:], start, _mins(start, end), 3,
+                     "" if left is None else left,
+                     "" if total is None else total])
 
     if not rows:
-        raise RuntimeError("회차를 못 읽었습니다 (응답 %d자). "
-                           "/api/cinema/diag 로 응답 모양을 확인하세요." % len(body))
+        raise RuntimeError("그날 회차가 없습니다 (찾은 항목 %d개)" % len(found))
     return rows
 
 
@@ -372,12 +419,21 @@ def diag():
         body = _megabox_raw("0082", datetime.now(KST).strftime("%Y-%m-%d"))
         mb = {"len": len(body), "isJSON": body.lstrip().startswith(("{", "["))}
 
-        # 회차 정보가 어떤 이름으로 들어 있는지 찾아 봅니다
-        attrs = sorted(set(re.findall(r'data-[a-z-]+', body)))
-        mb["dataAttrs"] = attrs[:25]
-        mb["times"] = re.findall(r'\b([01]\d|2[0-3]):[0-5]\d\b', body)[:8]
+        # JSON 이면 회차 목록을 찾아 첫 항목의 칸 이름을 보여 줍니다.
+        try:
+            data = json.loads(body)
+            mb["topKeys"] = list(data)[:10]
+            mm = data.get("megaMap") or {}
+            mb["megaMapKeys"] = list(mm)[:20]
+            found = []
+            _mb_pick(data, found)
+            mb["rowsFound"] = len(found)
+            if found:
+                mb["sampleKeys"] = sorted(found[0])[:30]
+                mb["sample"] = {k: str(v)[:24] for k, v in list(found[0].items())[:12]}
+        except Exception as e:
+            mb["parseError"] = "%s: %s" % (type(e).__name__, str(e)[:120])
         mb["dates"] = sorted(set(re.findall(r'\b20\d{6}\b', body)))[:9]
-        mb["rowsMatched"] = len(MB_ROW.findall(body))
 
         # 사람이 읽는 글자 일부
         txt = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", body)
