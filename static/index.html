@@ -866,6 +866,7 @@ var APP = (function () {
     setKobis: function () {},
     preview: function () { return Promise.reject(new Error("연결 없음")); },
     searchPeople: function () { return Promise.resolve([]); },
+    findByPerson: function () { return Promise.resolve(null); },
     reviews: function () { return Promise.resolve([]); },
     popular: function () { return Promise.reject(new Error("연결 없음")); },
     director: function () { return Promise.resolve(""); },
@@ -1713,6 +1714,7 @@ var APP = (function () {
     setKobis: function () {},
     preview: function () { return Promise.reject(new Error("연결 없음")); },
     searchPeople: function () { return Promise.resolve([]); },
+    findByPerson: function () { return Promise.resolve(null); },
     reviews: function () { return Promise.resolve([]); },
     popular: function () { return Promise.reject(new Error("연결 없음")); },
     director: function () { return Promise.resolve(""); },
@@ -2440,6 +2442,7 @@ var APP = (function () {
     setKobis: function () {},
     preview: function () { return Promise.reject(new Error("연결 없음")); },
     searchPeople: function () { return Promise.resolve([]); },
+    findByPerson: function () { return Promise.resolve(null); },
     reviews: function () { return Promise.resolve([]); },
     popular: function () { return Promise.reject(new Error("연결 없음")); },
     director: function () { return Promise.resolve(""); },
@@ -3984,6 +3987,7 @@ var APP = (function () {
     setKobis: function () {},
     preview: function () { return Promise.reject(new Error("연결 없음")); },
     searchPeople: function () { return Promise.resolve([]); },
+    findByPerson: function () { return Promise.resolve(null); },
     reviews: function () { return Promise.resolve([]); },
     popular: function () { return Promise.reject(new Error("연결 없음")); },
     director: function () { return Promise.resolve(""); },
@@ -5698,6 +5702,7 @@ var APP = (function () {
     setKobis: function () {},
     preview: function () { return Promise.reject(new Error("연결 없음")); },
     searchPeople: function () { return Promise.resolve([]); },
+    findByPerson: function () { return Promise.resolve(null); },
     reviews: function () { return Promise.resolve([]); },
     popular: function () { return Promise.reject(new Error("연결 없음")); },
     director: function () { return Promise.resolve(""); },
@@ -6231,6 +6236,16 @@ window.addEventListener("message", function (e) {
      서재에 없는 작품을 담지 않고 보여주기 위한 임시 껍데기입니다.
      id 를 "tmdb-번호" 로 두어 서재의 내부 id 와 겹치지 않게 합니다.
      temp 표시가 있으면 화면이 "담기" 버튼을 띄웁니다. */
+  /* 포스터 주소가 있어도 TMDB 에 파일이 없으면 깨진 그림과 alt 글자만 남습니다.
+     불러오기에 실패하면 그림을 지워 자리표시가 보이게 합니다. */
+  document.addEventListener("error", function (e) {
+    var t = e.target;
+    if (t && t.tagName === "IMG" && /image\.tmdb\.org/.test(t.src || "")) {
+      t.style.display = "none";
+      if (t.parentElement) t.parentElement.classList.add("noimg");
+    }
+  }, true);
+
   function asTemp(d, tmdbId) {
     var tid = "tmdb-" + tmdbId;
 
@@ -6618,7 +6633,7 @@ window.addEventListener("message", function (e) {
 
   /* 사람 이름으로 찾은 결과. 제목 검색과 따로 묶어 보여 줍니다. */
   function peopleSearch(t) {
-    APP.searchPeople(t).then(function (p) {
+    APP.findByPerson(t).then(function (p) {
       if (!p || !p.films.length) return;
       if (q.value.trim() !== t) return;          /* 그새 다른 걸 치면 버립니다 */
       if (res.querySelector(".wide.person")) return;
@@ -7171,6 +7186,7 @@ var APP = (function () {
     setKobis: function () {},
     preview: function () { return Promise.reject(new Error("연결 없음")); },
     searchPeople: function () { return Promise.resolve([]); },
+    findByPerson: function () { return Promise.resolve(null); },
     reviews: function () { return Promise.resolve([]); },
     popular: function () { return Promise.reject(new Error("연결 없음")); },
     director: function () { return Promise.resolve(""); },
@@ -8874,6 +8890,7 @@ var APP = (function () {
     setKobis: function () {},
     preview: function () { return Promise.reject(new Error("연결 없음")); },
     searchPeople: function () { return Promise.resolve([]); },
+    findByPerson: function () { return Promise.resolve(null); },
     reviews: function () { return Promise.resolve([]); },
     popular: function () { return Promise.reject(new Error("연결 없음")); },
     director: function () { return Promise.resolve(""); },
@@ -10272,6 +10289,7 @@ var APP = (function () {
     setKobis: function () {},
     preview: function () { return Promise.reject(new Error("연결 없음")); },
     searchPeople: function () { return Promise.resolve([]); },
+    findByPerson: function () { return Promise.resolve(null); },
     reviews: function () { return Promise.resolve([]); },
     popular: function () { return Promise.reject(new Error("연결 없음")); },
     director: function () { return Promise.resolve(""); },
@@ -11624,6 +11642,7 @@ var APP = (function () {
     setKobis: function () {},
     preview: function () { return Promise.reject(new Error("연결 없음")); },
     searchPeople: function () { return Promise.resolve([]); },
+    findByPerson: function () { return Promise.resolve(null); },
     reviews: function () { return Promise.resolve([]); },
     popular: function () { return Promise.reject(new Error("연결 없음")); },
     director: function () { return Promise.resolve(""); },
@@ -12722,6 +12741,7 @@ var APP = (function () {
     setKobis: function () {},
     preview: function () { return Promise.reject(new Error("연결 없음")); },
     searchPeople: function () { return Promise.resolve([]); },
+    findByPerson: function () { return Promise.resolve(null); },
     reviews: function () { return Promise.resolve([]); },
     popular: function () { return Promise.reject(new Error("연결 없음")); },
     director: function () { return Promise.resolve(""); },
@@ -13591,6 +13611,7 @@ var APP = (function () {
     setKobis: function () {},
     preview: function () { return Promise.reject(new Error("연결 없음")); },
     searchPeople: function () { return Promise.resolve([]); },
+    findByPerson: function () { return Promise.resolve(null); },
     reviews: function () { return Promise.resolve([]); },
     popular: function () { return Promise.reject(new Error("연결 없음")); },
     director: function () { return Promise.resolve(""); },
@@ -14781,6 +14802,7 @@ var APP = (function () {
     setKobis: function () {},
     preview: function () { return Promise.reject(new Error("연결 없음")); },
     searchPeople: function () { return Promise.resolve([]); },
+    findByPerson: function () { return Promise.resolve(null); },
     reviews: function () { return Promise.resolve([]); },
     popular: function () { return Promise.reject(new Error("연결 없음")); },
     director: function () { return Promise.resolve(""); },
@@ -16206,6 +16228,7 @@ var APP = (function () {
     setKobis: function () {},
     preview: function () { return Promise.reject(new Error("연결 없음")); },
     searchPeople: function () { return Promise.resolve([]); },
+    findByPerson: function () { return Promise.resolve(null); },
     reviews: function () { return Promise.resolve([]); },
     popular: function () { return Promise.reject(new Error("연결 없음")); },
     director: function () { return Promise.resolve(""); },
@@ -17387,6 +17410,7 @@ var APP = (function () {
     setKobis: function () {},
     preview: function () { return Promise.reject(new Error("연결 없음")); },
     searchPeople: function () { return Promise.resolve([]); },
+    findByPerson: function () { return Promise.resolve(null); },
     reviews: function () { return Promise.resolve([]); },
     popular: function () { return Promise.reject(new Error("연결 없음")); },
     director: function () { return Promise.resolve(""); },
@@ -18767,7 +18791,7 @@ function film(id) { return FILM_BY_ID[id]; }
 
      감독을 먼저 봅니다. 배우로도 이름이 걸리는 사람이 많은데,
      영화를 찾을 때는 대개 감독 쪽을 기대하기 때문입니다. */
-  APP.searchPeople = function (q) {
+  APP.findByPerson = function (q) {
     var key = ($("key").value || "").replace(/\s+/g, "");
     if (!q || key.length < 20) return Promise.resolve(null);
     var a = auth(key);
@@ -19075,6 +19099,8 @@ function film(id) { return FILM_BY_ID[id]; }
   };
 
   /* 이름으로 인물 번호를 찾습니다. 한글·영문 표기가 달라도 같은 사람을 가리키게 하려는 것입니다. */
+  /* 이름이 이미 쓰이고 있어(영화제 모듈이 쓰는 사람 id 검색) 다른 이름을 씁니다.
+     같은 이름으로 두면 뒤에 정의된 쪽이 앞의 것을 덮어써 영화제 기능이 망가집니다. */
   APP.searchPeople = function (q) {
     var key = ($("key").value || "").replace(/\s+/g, "");
     if (key.length < 20 || !q) return Promise.resolve([]);
