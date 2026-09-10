@@ -320,7 +320,11 @@ def _mb_pick(node, out):
         return
 
     st, ti = _mb_start(node), _mb_title(node)
-    if st and ti and MB_TIME.match(str(st).strip()):
+    # 시각과 제목만으로 보면 "상영 중인 영화 목록"도 회차로 잘못 잡힙니다.
+    # 상영관이나 회차 번호가 함께 있어야 진짜 회차입니다.
+    hall = _mb_key(node, ("theab",), ("screen", "nm"), ("theat", "nm"))
+    seq = _mb_key(node, ("play", "schdl"), ("play", "seq"), ("play", "no"))
+    if st and ti and MB_TIME.match(str(st).strip()) and (hall or seq):
         out.append(node)
         return
 
@@ -352,6 +356,19 @@ def _fetch_megabox(t, day):
         if not start:
             continue
         end = _hhmm(_mb_key(it, ("play", "end"), ("end", "tm"), ("endtime",))) or start
+
+        # moviePlayTime 에 실제 상영시간(분)이 들어 있습니다.
+        # 시작·종료로 재면 광고·예고편이 끼어 10분쯤 길게 나옵니다.
+        run = None
+        try:
+            # ("play","time") 을 넣으면 playStartTime 을 먼저 물어 "21:00" 이
+            # 잡히고 숫자 변환에 실패합니다. movie 가 들어간 이름만 봅니다.
+            run = int(str(_mb_key(it, ("movie", "playtime"),
+                                      ("movie", "runtime")) or "").strip())
+        except Exception:
+            pass
+        if not run or run <= 0:
+            run = _mins(start, end)
         title = str(_mb_title(it) or "").strip()
         if not title:
             continue
@@ -368,7 +385,7 @@ def _fetch_megabox(t, day):
         # ("seat","cnt") 처럼 느슨한 조건을 앞에 두면 restSeatCnt 를 먼저
         # 물어 총석이 잔여와 같아집니다. 좁은 조건부터 봅니다.
         total = _mb_key(it, ("tot", "seat"), ("total", "seat"))
-        rows.append([title, venue, day[5:], start, _mins(start, end), 3,
+        rows.append([title, venue, day[5:], start, run, 3,
                      "" if left is None else left,
                      "" if total is None else total])
 
@@ -495,15 +512,20 @@ def diag():
             found = []
             _mb_pick(data, found)
             mb["rowsFound"] = len(found)
-            if found:
-                mb["sampleKeys"] = sorted(found[0])[:30]
-            else:
-                # 못 찾았으면 megaMap 안 목록들의 첫 항목 칸 이름을 보여 줍니다.
-                probe = {}
-                for k, v in (mm or {}).items():
-                    if isinstance(v, list) and v and isinstance(v[0], dict):
-                        probe[k] = {"n": len(v), "keys": sorted(v[0])[:30]}
-                mb["lists"] = probe
+
+            # megaMap 안 목록마다 몇 개인지, 시각처럼 생긴 칸이 있는지 봅니다.
+            probe = {}
+            for k, v in (mm or {}).items():
+                if isinstance(v, list) and v and isinstance(v[0], dict):
+                    first = v[0]
+                    times = {kk: str(vv) for kk, vv in first.items()
+                             if MB_TIME.match(str(vv).strip())}
+                    probe[k] = {"n": len(v),
+                                "timeLike": times,
+                                "keys": sorted(first)}
+                elif isinstance(v, list):
+                    probe[k] = {"n": len(v), "sample": str(v[:3])[:80]}
+            mb["lists"] = probe
         except Exception as e:
             mb["parseError"] = "%s: %s" % (type(e).__name__, str(e)[:120])
         mb["dates"] = sorted(set(re.findall(r'\b20\d{6}\b', body)))[:9]
