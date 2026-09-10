@@ -6,8 +6,12 @@
 
      ① Referer 를 붙입니다. 없으면 영화의전당이 "잘 못된 경로 입니다" 를 돌려줍니다.
      ② 캐시를 직접 들고 있습니다. Vercel 은 응답 헤더로 캐시를 맡길 수 있었지만
-        Render 는 그런 앞단이 없어서, 30분간 메모리에 담아 둡니다.
-     ③ 동시 요청은 3건으로 제한합니다(원본과 같음).
+        Render 는 그런 앞단이 없어서, 하루치씩 6시간 메모리에 담아 둡니다.
+     ③ 동시 요청은 4건으로 제한합니다.
+
+   Render 무료 플랜은 CPU 가 약하고 싱가포르에 있어, 7일치를 한 번에 받으면
+   gunicorn 기본 시간(30초)을 넘겨 WORKER TIMEOUT 이 납니다.
+   그래서 하루치를 따로 캐시해 두 번째 요청부터는 거의 즉시 끝나게 했습니다.
 """
 
 import csv
@@ -43,8 +47,11 @@ CLOCK = re.compile(r"(\d{1,2}):(\d{2})")
 # Render 무료 플랜은 15분 쉬면 잠들어 이 캐시가 사라집니다.
 # 깨어난 뒤 첫 요청은 영화의전당에 다시 가게 됩니다.
 _lock = threading.Lock()
-_cache = {}          # 키 → (담은 시각, CSV 글자)
-_TTL = 30 * 60
+
+# 하루치를 따로 담습니다. 묶음 전체를 키로 쓰면 days 를 바꿀 때마다
+# 캐시가 어긋나고, 하루만 새로 필요해도 7일을 다 받게 됩니다.
+_day_cache = {}          # "2026-09-10" → (담은 시각, rows)
+_DAY_TTL = 6 * 60 * 60   # 상영시간표는 자주 바뀌지 않아 6시간 유지
 
 
 def _fetch_day(day):
@@ -53,7 +60,7 @@ def _fetch_day(day):
         BASE,
         params={"rbsIdx": 37, "searchDate": day},
         headers={"User-Agent": UA, "Referer": REFERER},
-        timeout=25,
+        timeout=8,       # 한 날짜가 8초 안에 안 오면 포기하고 나머지를 살립니다
     )
     r.raise_for_status()
     r.encoding = r.apparent_encoding or "utf-8"
@@ -77,6 +84,18 @@ def _fetch_day(day):
     return rows
 
 
+def _get_day_cached(day):
+    """받아둔 게 있으면 그것을 쓰고, 없을 때만 영화의전당에 갑니다."""
+    with _lock:
+        hit = _day_cache.get(day)
+        if hit and (_time.time() - hit[0]) < _DAY_TTL:
+            return hit[1]
+    rows = _fetch_day(day)
+    with _lock:
+        _day_cache[day] = (_time.time(), rows)
+    return rows
+
+
 @bp.route("/api/cinema")
 def cinema():
     try:
@@ -92,15 +111,9 @@ def cinema():
         base = datetime.now(KST)
 
     day_list = [(base + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
-    ckey = day_list[0] + ":" + str(days)
-
-    with _lock:
-        hit = _cache.get(ckey)
-        if hit and (_time.time() - hit[0]) < _TTL:
-            return _csv_response(hit[1])
 
     # 하루씩 순서대로 받으면 7일에 오래 걸리고, 한꺼번에 보내면 상대 서버에
-    # 몰아치게 됩니다. 3건씩만 동시에 받습니다.
+    # 몰아치게 됩니다. 4건씩만 동시에 받습니다.
     all_rows, failed = [], []
     queue = list(day_list)
     qlock = threading.Lock()
@@ -112,7 +125,7 @@ def cinema():
                     return
                 day = queue.pop(0)
             try:
-                got = _fetch_day(day)
+                got = _get_day_cached(day)
                 with qlock:
                     all_rows.extend(got)
             except Exception:
@@ -120,7 +133,7 @@ def cinema():
                     failed.append(day)
             _time.sleep(0.25)
 
-    ths = [threading.Thread(target=worker) for _ in range(3)]
+    ths = [threading.Thread(target=worker) for _ in range(4)]
     for t in ths:
         t.start()
     for t in ths:
@@ -140,9 +153,6 @@ def cinema():
     w.writerow(["title", "venue", "date", "start", "runtime", "priority"])
     w.writerows(all_rows)
     text = buf.getvalue().rstrip("\n")
-
-    with _lock:
-        _cache[ckey] = (_time.time(), text)
 
     if request.args.get("format") == "json":
         return jsonify({"ok": True, "count": len(all_rows),
