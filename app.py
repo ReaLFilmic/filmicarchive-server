@@ -42,9 +42,10 @@ def home():
 
 @app.route("/login")
 def login():
-    # 구글 로그인 화면으로 보냅니다. 돌아올 주소를 함께 알려줍니다.
-    return google.authorize_redirect(url_for("callback", _external=True))
-
+    return google.authorize_redirect(
+        url_for("callback", _external=True),
+        prompt="select_account",        # 늘 계정 선택 화면을 보여줍니다
+    )
 
 @app.route("/callback")
 def callback():
