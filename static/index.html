@@ -3944,6 +3944,10 @@ window.addEventListener("message", function (e) {
   html[data-mode="light"] .welcome .wsteps i{color:#D8CBB2}
   html[data-mode="light"] .emptyrow b{color:#F6EFE0}
   html[data-mode="light"] .emptyrow span{color:#CFC2A8}
+
+  /* 패널이 위로 붙게 하고, 옮길 때 부드럽게 그려지도록 합니다. */
+  #sleeve{align-self:start}
+  #sleeve{will-change:transform}
 </style>
 
 <script>
@@ -5195,6 +5199,47 @@ window.addEventListener("message", function (e) {
     renderShelf();
     renderSleeve();
   });
+})();
+<\/script>
+<script>
+/* ── 정보 패널 따라오기 ──
+   화면을 내려도 오른쪽 정보가 눈에서 사라지지 않게 합니다.
+   iframe 은 스크롤이 없어 sticky 가 안 되므로, 바깥 창이 알려주는
+   스크롤 위치를 받아 transform 으로 직접 옮깁니다. */
+(function () {
+  var GAP = 18;                     /* 화면 위쪽에서 띄울 여백 */
+  var MIN_W = 900;                  /* 이보다 좁으면 패널이 아래로 내려가므로 그대로 둡니다 */
+
+  function tick(o) {
+    var box = document.querySelector('#sleeve');
+    var wrap = document.querySelector('#sleeve');
+    var stage = document.querySelector('.room');
+    if (!box || !wrap || !stage) return;
+
+    if (window.innerWidth < MIN_W) { box.style.transform = ""; return; }
+
+    /* offsetTop 으로 계산하면 iframe 안팎의 기준점이 어긋나 위치가 틀립니다.
+       그래서 지금 실제로 그려진 좌표를 보고 스스로 맞춥니다.
+
+         r.top        iframe 안에서의 패널 윗선 (지금 옮긴 만큼 포함)
+         o.top        iframe 이 화면 위로 밀려난 양
+         r.top-o.top  화면에서 실제로 보이는 위치 */
+    var y = parseFloat(box.dataset.stickyY || "0");
+    var seen = box.getBoundingClientRect().top - o.top;
+
+    /* 화면 위에서 GAP 만큼 떨어지게 만들 차이 */
+    y = y + (GAP - seen);
+
+    /* 목록보다 더 내려가면 안 됩니다. wrap 은 패널만 감싸 높이가 같으므로
+       목록이 놓인 stage 높이를 기준으로 잡습니다. */
+    var room = stage.offsetHeight - box.offsetHeight - GAP;
+    y = Math.max(0, Math.min(y, Math.max(0, room)));
+
+    box.dataset.stickyY = y;
+    box.style.transform = y ? "translateY(" + Math.round(y) + "px)" : "";
+  }
+
+  if (typeof onOuterScroll === "function") onOuterScroll(tick);
 })();
 <\/script>
 </body>
@@ -9805,11 +9850,6 @@ window.addEventListener("message", function (e) {
      포스터를 훑으면서 옆에서 바로 확인하게 합니다. 좁은 화면에서는 아래로 내려갑니다. */
   .stage{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:20px;align-items:start}
   .stage > .side{transition:transform .12s linear}
-  /* 정보 패널을 스크롤에 따라 내립니다.
-     iframe 안에는 자체 스크롤이 없어 position:sticky 가 듣지 않습니다.
-     바깥 창이 알려주는 위치를 받아 transform 으로 직접 옮깁니다. */
-  .side{align-self:start}
-  .side #detail{will-change:transform}
   .side .info{margin:0;flex-direction:column}
   .side .info img.p{width:100%;max-width:150px}
   .side .info .txt{min-width:0}
@@ -10129,6 +10169,10 @@ window.addEventListener("message", function (e) {
     background: #F2EFE2; border-color: #DDD9C8; color: #3A382E;
   }
   html[data-mode="light"] .warnbtn { background: #F6E3E0; border-color: #E0BDB8; color: #8A463E; }
+
+  /* 패널이 위로 붙게 하고, 옮길 때 부드럽게 그려지도록 합니다. */
+  .side{align-self:start}
+  .side #detail{will-change:transform}
 </style>
 
 <script>
@@ -12076,31 +12120,6 @@ window.addEventListener("message", function (e) {
     } catch (e) {}
   }
 
-  /* 패널이 화면 안에 머물게 합니다. 목록이 길어 아래로 내려가도
-     정보가 눈에서 사라지지 않습니다. */
-  (function stickySide() {
-    var side = document.querySelector(".side");
-    var box = document.getElementById("detail");
-    if (!side || !box || typeof onOuterScroll !== "function") return;
-
-    var stage = document.querySelector(".stage");
-
-    onOuterScroll(function (o) {
-      /* 좁은 화면에서는 패널이 목록 아래로 내려가므로 옮기지 않습니다. */
-      if (window.innerWidth < 900 || !stage) {
-        box.style.transform = "";
-        return;
-      }
-      /* 패널 칸의 윗선이 화면 위로 얼마나 지나갔는지 */
-      var gone = o.top - (side.offsetTop || 0) + 24;
-      /* 내려갈 수 있는 최대 — .side 는 패널만 감싸서 높이가 같습니다.
-         그래서 목록이 놓인 stage 높이를 기준으로 잡아야 합니다. */
-      var room = stage.offsetHeight - box.offsetHeight - 24;
-      var y = Math.max(0, Math.min(gone, Math.max(0, room)));
-      box.style.transform = y ? "translateY(" + Math.round(y) + "px)" : "";
-    });
-  })();
-
   function showInfo(r, scroll) {
     var box = $("detail");
     box.innerHTML = '<div class="info"><span class="load">' + r[1] + " 정보를 불러오는 중…</span></div>";
@@ -12213,6 +12232,47 @@ window.addEventListener("message", function (e) {
     setTimeout(place, 300);
   })();
 
+})();
+<\/script>
+<script>
+/* ── 정보 패널 따라오기 ──
+   화면을 내려도 오른쪽 정보가 눈에서 사라지지 않게 합니다.
+   iframe 은 스크롤이 없어 sticky 가 안 되므로, 바깥 창이 알려주는
+   스크롤 위치를 받아 transform 으로 직접 옮깁니다. */
+(function () {
+  var GAP = 18;                     /* 화면 위쪽에서 띄울 여백 */
+  var MIN_W = 900;                  /* 이보다 좁으면 패널이 아래로 내려가므로 그대로 둡니다 */
+
+  function tick(o) {
+    var box = document.querySelector('.side #detail');
+    var wrap = document.querySelector('.side');
+    var stage = document.querySelector('.stage');
+    if (!box || !wrap || !stage) return;
+
+    if (window.innerWidth < MIN_W) { box.style.transform = ""; return; }
+
+    /* offsetTop 으로 계산하면 iframe 안팎의 기준점이 어긋나 위치가 틀립니다.
+       그래서 지금 실제로 그려진 좌표를 보고 스스로 맞춥니다.
+
+         r.top        iframe 안에서의 패널 윗선 (지금 옮긴 만큼 포함)
+         o.top        iframe 이 화면 위로 밀려난 양
+         r.top-o.top  화면에서 실제로 보이는 위치 */
+    var y = parseFloat(box.dataset.stickyY || "0");
+    var seen = box.getBoundingClientRect().top - o.top;
+
+    /* 화면 위에서 GAP 만큼 떨어지게 만들 차이 */
+    y = y + (GAP - seen);
+
+    /* 목록보다 더 내려가면 안 됩니다. wrap 은 패널만 감싸 높이가 같으므로
+       목록이 놓인 stage 높이를 기준으로 잡습니다. */
+    var room = stage.offsetHeight - box.offsetHeight - GAP;
+    y = Math.max(0, Math.min(y, Math.max(0, room)));
+
+    box.dataset.stickyY = y;
+    box.style.transform = y ? "translateY(" + Math.round(y) + "px)" : "";
+  }
+
+  if (typeof onOuterScroll === "function") onOuterScroll(tick);
 })();
 <\/script>
 </body>
@@ -13424,6 +13484,10 @@ window.addEventListener("message", function (e) {
     background: #F2EFE2; border-color: #DDD9C8; color: #3A382E;
   }
   html[data-mode="light"] .warnbtn { background: #F6E3E0; border-color: #E0BDB8; color: #8A463E; }
+
+  /* 패널이 위로 붙게 하고, 옮길 때 부드럽게 그려지도록 합니다. */
+  .side{align-self:start}
+  .side #detail{will-change:transform}
 </style>
 <script>
 var BIFF_SECTIONS = ["개막작", "경쟁", "갈라 프레젠테이션", "아이콘", "비전", "아시아영화의 창", "한국영화의 오늘", "월드 시네마", "플래시 포워드", "오픈 시네마"];
@@ -14148,6 +14212,47 @@ window.addEventListener("message", function (e) {
     setTimeout(place, 300);
   })();
 
+})();
+<\/script>
+<script>
+/* ── 정보 패널 따라오기 ──
+   화면을 내려도 오른쪽 정보가 눈에서 사라지지 않게 합니다.
+   iframe 은 스크롤이 없어 sticky 가 안 되므로, 바깥 창이 알려주는
+   스크롤 위치를 받아 transform 으로 직접 옮깁니다. */
+(function () {
+  var GAP = 18;                     /* 화면 위쪽에서 띄울 여백 */
+  var MIN_W = 900;                  /* 이보다 좁으면 패널이 아래로 내려가므로 그대로 둡니다 */
+
+  function tick(o) {
+    var box = document.querySelector('.side #detail');
+    var wrap = document.querySelector('.side');
+    var stage = document.querySelector('.stage');
+    if (!box || !wrap || !stage) return;
+
+    if (window.innerWidth < MIN_W) { box.style.transform = ""; return; }
+
+    /* offsetTop 으로 계산하면 iframe 안팎의 기준점이 어긋나 위치가 틀립니다.
+       그래서 지금 실제로 그려진 좌표를 보고 스스로 맞춥니다.
+
+         r.top        iframe 안에서의 패널 윗선 (지금 옮긴 만큼 포함)
+         o.top        iframe 이 화면 위로 밀려난 양
+         r.top-o.top  화면에서 실제로 보이는 위치 */
+    var y = parseFloat(box.dataset.stickyY || "0");
+    var seen = box.getBoundingClientRect().top - o.top;
+
+    /* 화면 위에서 GAP 만큼 떨어지게 만들 차이 */
+    y = y + (GAP - seen);
+
+    /* 목록보다 더 내려가면 안 됩니다. wrap 은 패널만 감싸 높이가 같으므로
+       목록이 놓인 stage 높이를 기준으로 잡습니다. */
+    var room = stage.offsetHeight - box.offsetHeight - GAP;
+    y = Math.max(0, Math.min(y, Math.max(0, room)));
+
+    box.dataset.stickyY = y;
+    box.style.transform = y ? "translateY(" + Math.round(y) + "px)" : "";
+  }
+
+  if (typeof onOuterScroll === "function") onOuterScroll(tick);
 })();
 <\/script>
 </body>
