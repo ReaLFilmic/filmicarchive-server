@@ -3616,6 +3616,16 @@ window.addEventListener("message", function (e) {
   html[data-mode="light"] .count { color: #6E6C60; }
   html[data-mode="light"] .count b { color: #17140E; }
   html[data-mode="light"] .bar button,
+  /* 정렬 · 필터 접기 — 원래 이 규칙이 없어서 버튼을 눌러도 아무 일이 없었습니다.
+     넓은 화면에서는 정렬 버튼이 다 보이므로 버튼 자체를 감춥니다. */
+  .more{display:none}
+  @media (max-width:760px){
+    .more{display:inline-block}
+    .fold{display:none}
+    .fold.on{display:flex;flex-wrap:wrap;gap:5px;align-items:center;
+      width:100%;margin-top:7px}
+  }
+
   html[data-mode="light"] .more { background: #FFFDF4; border-color: #DDD9C8; color: #3A382E; }
   html[data-mode="light"] .bar button:hover,
   html[data-mode="light"] .more:hover { background: #EFEBDC; color: #17140E; }
@@ -5270,6 +5280,12 @@ window.addEventListener("message", function (e) {
   .poster .gloss{position:absolute;inset:0;border-radius:0;
     background:linear-gradient(112deg,rgba(255,255,255,.14) 0 12%,rgba(255,255,255,0) 36%,rgba(255,255,255,.05) 100%)}
 
+  /* 미리 보기 상태에만 나오는 담기 버튼 */
+  .landbtn{margin:0 0 8px;font-family:var(--sans);font-size:12.5px;
+    padding:6px 13px;border-radius:999px;border:0;cursor:pointer;
+    background:var(--lamp);color:#2A1C08;font-weight:600}
+  .landbtn:hover{filter:brightness(1.06)}
+  .landbtn:disabled{opacity:.6;cursor:default}
   h2.title{font-family:var(--serif);font-size:29px;font-weight:700;margin:0 0 3px;line-height:1.24}
   .meta{color:var(--mut);font-size:12.5px;margin:0 0 16px}
   .tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px}
@@ -6145,12 +6161,62 @@ window.addEventListener("message", function (e) {
   /* 이 화면의 모든 변경(별점·코멘트·관람상태·관람일)이 여기를 지나갑니다.
      예전에는 화면만 다시 그리고 저장을 하지 않아, 코멘트가 남지 않았습니다. */
   function save(){
+    /* 미리 보기 상태에서 뭔가를 남기면 그 순간 서재에 담습니다. */
+    if (cur && cur.temp) {
+      landIfTemp().then(function(){ APP.notify("record"); renderDetail(); });
+      return;
+    }
     if (cur) { try { APP.persist(cur.id); } catch(e){} }
     APP.notify("record");
   }
   function load(){ return Promise.resolve(); }
 
   function R(id){ return APP.rec(id); }
+
+  /* ── 미리 보기 ──
+     서재에 없는 작품을 담지 않고 보여주기 위한 임시 껍데기입니다.
+     id 를 "tmdb-번호" 로 두어 서재의 내부 id 와 겹치지 않게 합니다.
+     temp 표시가 있으면 화면이 "담기" 버튼을 띄웁니다. */
+  function asTemp(d, tmdbId) {
+    return {
+      id: "tmdb-" + tmdbId, tmdbId: tmdbId, temp: true,
+      ko: d.ko || "", en: d.en || "", year: d.year || 0,
+      dir: d.dir || "", runtime: d.runtime || 0,
+      genres: d.genres || [], overview: d.overview || "",
+      crew: d.crew || [], cast: d.cast || [], crit: [],
+      imdb: d.imdb || 0, pub: d.pub || 0,
+      stills: d.stills || [], videos: d.videos || [],
+      bg: d.bg || "#22221C", fg: d.fg || "#EDEBE0"
+    };
+  }
+
+  /* 미리 보기 상태에서 별점·코멘트를 남기면 그때 서재에 담습니다.
+     담고 나면 진짜 작품으로 바꿔 끼워, 기록이 임시 id 에 남지 않게 합니다. */
+  var landing = false;
+  function landIfTemp() {
+    if (!cur || !cur.temp || landing) return Promise.resolve(cur);
+    landing = true;
+    var tmp = cur;
+    return APP.addByTmdbId(tmp.tmdbId).then(function (f) {
+      /* 임시 id 에 붙은 기록을 진짜 id 로 옮깁니다. */
+      var was = APP.records[tmp.id];
+      if (was) {
+        var now = APP.rec(f.id);
+        ["score", "status", "comment", "spoiler", "at"].forEach(function (k) {
+          if (was[k]) now[k] = was[k];
+        });
+        delete APP.records[tmp.id];
+      }
+      cur = f;
+      landing = false;
+      APP.persist(f.id);
+      say(f.ko + " 을 서재에 담았습니다.");
+      return f;
+    }).catch(function () {
+      landing = false;
+      return tmp;
+    });
+  }
 
   // ---------- 별점 ----------
   var STAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l2.9 6.1 6.7.9-4.9 4.6 1.2 6.6L12 17.6 6.1 20.8l1.2-6.6L2.4 9.6l6.7-.9z" fill="COLOR"/></svg>';
@@ -6172,6 +6238,16 @@ window.addEventListener("message", function (e) {
   }
 
   // ---------- 상세 ----------
+  function bindLand(){
+    var b = document.getElementById("landBtn");
+    if (!b) return;
+    b.addEventListener("click", function(){
+      b.disabled = true;
+      b.textContent = "담는 중…";
+      landIfTemp().then(function(){ renderDetail(); APP.notify("record"); });
+    });
+  }
+
   function renderDetail(){
     /* 방금 담은 영화는 부모 창의 서재에 들어가지만, 이 화면이 들고 있는 목록은
        화면이 새로 만들어질 때까지 그대로입니다. 그래서 서재가 비었는지로 판단하면
@@ -6187,6 +6263,7 @@ window.addEventListener("message", function (e) {
         '<div class="poster">'+coverHTML(f,{titleSize:"20px",subSize:"10px",yearSize:"11px"})+'<span class="gloss"></span></div>'+
         '<div>'+
           '<h2 class="title">'+f.ko+'</h2>'+
+          (f.temp ? '<button class="landbtn" id="landBtn">서재에 담기</button>' : "")+
           '<p class="meta">'+f.en+' · '+f.year+' · '+f.runtime+'분 · 감독 '+f.dir+'</p>'+
           '<div class="tags">'+f.genres.map(function(g){return '<span class="tag">'+g+'</span>';}).join("")+'</div>'+
 
@@ -6315,6 +6392,7 @@ window.addEventListener("message", function (e) {
 
   function bindDetail(){
     critFill(document, renderDetail);
+    bindLand();
     loadReviews(cur);
     bindStars();
     Array.prototype.forEach.call($("detail").querySelectorAll("[data-st]"), function(b){
@@ -6510,10 +6588,12 @@ window.addEventListener("message", function (e) {
       $("detail").innerHTML =
         '<div class="loading"><b>' + name + '</b><span>정보를 받아오는 중…</span></div>';
 
-      APP.addByTmdbId(parseInt(out.dataset.tmdb, 10)).then(function(f){
-        cur = f;
+      /* 서재에 담지 않고 정보만 받아 보여 줍니다.
+         담기 버튼을 누르거나 별점·코멘트를 남길 때 담깁니다. */
+      APP.preview(parseInt(out.dataset.tmdb, 10)).then(function(d){
+        cur = asTemp(d, parseInt(out.dataset.tmdb, 10));
         renderDetail();
-        say(f.ko + " 을 담고 열었습니다.");
+        say(d.ko + " 정보를 열었습니다. 담기를 누르면 서재에 들어갑니다.");
       }).catch(function(e){
         $("detail").innerHTML =
           '<div class="loading"><b>담지 못했습니다</b><span>' +
@@ -6628,6 +6708,14 @@ window.addEventListener("message", function (e) {
   .pickhead{display:flex;align-items:baseline;gap:10px;margin:26px 0 10px}
   .pickhead h2{font-family:var(--serif);font-size:18px;font-weight:700;margin:0}
   .pickhead span{font-size:12px;color:var(--dim)}
+  /* 좁은 화면에서는 한 줄에 억지로 밀어넣지 않고 세로로 쌓습니다.
+     display:flex 로 두 덩어리를 나란히 두면 양쪽 다 단어 중간에서 접힙니다. */
+  @media (max-width:760px){
+    .pickhead{flex-direction:column;align-items:flex-start;gap:3px;
+      margin:20px 0 10px}
+    .pickhead h2{font-size:17px;word-break:keep-all}
+    .pickhead span{font-size:11.5px}
+  }
   .findrow{display:flex;gap:6px;margin:0 0 11px;flex-wrap:wrap}
   .findrow input{flex:1;min-width:200px;background:#191510;color:var(--paper);
     border:1px solid var(--edge);border-radius:3px;padding:7px 11px;
@@ -9717,6 +9805,11 @@ window.addEventListener("message", function (e) {
      포스터를 훑으면서 옆에서 바로 확인하게 합니다. 좁은 화면에서는 아래로 내려갑니다. */
   .stage{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:20px;align-items:start}
   .stage > .side{transition:transform .12s linear}
+  /* 정보 패널을 스크롤에 따라 내립니다.
+     iframe 안에는 자체 스크롤이 없어 position:sticky 가 듣지 않습니다.
+     바깥 창이 알려주는 위치를 받아 transform 으로 직접 옮깁니다. */
+  .side{align-self:start}
+  .side #detail{will-change:transform}
   .side .info{margin:0;flex-direction:column}
   .side .info img.p{width:100%;max-width:150px}
   .side .info .txt{min-width:0}
@@ -11982,6 +12075,31 @@ window.addEventListener("message", function (e) {
         JSON.stringify({ p: POSTER, t: TMDBID, y: YEAR }));
     } catch (e) {}
   }
+
+  /* 패널이 화면 안에 머물게 합니다. 목록이 길어 아래로 내려가도
+     정보가 눈에서 사라지지 않습니다. */
+  (function stickySide() {
+    var side = document.querySelector(".side");
+    var box = document.getElementById("detail");
+    if (!side || !box || typeof onOuterScroll !== "function") return;
+
+    var stage = document.querySelector(".stage");
+
+    onOuterScroll(function (o) {
+      /* 좁은 화면에서는 패널이 목록 아래로 내려가므로 옮기지 않습니다. */
+      if (window.innerWidth < 900 || !stage) {
+        box.style.transform = "";
+        return;
+      }
+      /* 패널 칸의 윗선이 화면 위로 얼마나 지나갔는지 */
+      var gone = o.top - (side.offsetTop || 0) + 24;
+      /* 내려갈 수 있는 최대 — .side 는 패널만 감싸서 높이가 같습니다.
+         그래서 목록이 놓인 stage 높이를 기준으로 잡아야 합니다. */
+      var room = stage.offsetHeight - box.offsetHeight - 24;
+      var y = Math.max(0, Math.min(gone, Math.max(0, room)));
+      box.style.transform = y ? "translateY(" + Math.round(y) + "px)" : "";
+    });
+  })();
 
   function showInfo(r, scroll) {
     var box = $("detail");
