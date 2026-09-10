@@ -60,6 +60,11 @@ LT_REF = "https://www.lottecinema.co.kr/NLCHS/Ticketing"
 MB_URL = "https://www.megabox.co.kr/on/oh/ohc/Brch/schedulePage.do"
 MB_REF = "https://www.megabox.co.kr/theater/time"
 
+# ── 모퉁이극장 (dtryx 예매 시스템) ──────────────────
+MT_URL = "https://www.dtryx.com/cinema/main.do"
+MT_CGID = "FE8EF4D2-F22D-4802-A39A-D58F23A29C1E"
+MT_CODE = "000097"
+
 # 극장 목록. 여기에 한 줄 더하면 그 극장이 화면에 함께 나옵니다.
 THEATERS = [
     {"key": "dureraum", "name": "영화의전당", "kind": "dureraum"},
@@ -73,6 +78,8 @@ THEATERS = [
      "kind": "lotte", "cid": "1|0101|2004"},
     {"key": "megabox-seomyeon", "name": "메가박스 서면대한",
      "kind": "megabox", "brch": "0082", "on": True},
+    # 모퉁이극장. 사이트 응답 구조를 확인한 뒤 on 을 True 로 바꾸세요.
+    {"key": "mtgi", "name": "모퉁이극장", "kind": "mtgi", "on": False},
 ]
 
 # ── 캐시 ────────────────────────────────────────────
@@ -360,7 +367,57 @@ def _fetch_megabox(t, day):
     return rows
 
 
-FETCH = {"dureraum": _fetch_dureraum, "cgv": _fetch_cgv,
+def _mt_raw(day):
+    r = requests.get(MT_URL, params={
+        "cgid": MT_CGID, "BrandCd": "etc", "CinemaCd": MT_CODE,
+        "playDe": day.replace("-", ""),      # 날짜 칸 이름은 확인 전 후보
+    }, headers={
+        "User-Agent": UA,
+        "Referer": "https://www.dtryx.com/",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ko-KR,ko;q=0.9",
+    }, timeout=TIMEOUT)
+    if r.status_code != 200:
+        raise RuntimeError("HTTP %d" % r.status_code)
+    r.encoding = r.apparent_encoding or "utf-8"
+    return r.text
+
+
+# 모퉁이극장 회차. 구조를 확인하기 전이라 넉넉하게 잡습니다.
+MT_ROW = re.compile(
+    r'(\d{1,2}:\d{2})[\s\S]{0,300}?'          # 시각
+    r'(?:<[^>]*>\s*)*([^<>\n]{2,60}?)\s*(?:<|$)'  # 그 뒤 제목처럼 보이는 글자
+)
+
+
+def _fetch_mtgi(t, day):
+    body = _mt_raw(day)
+    hits = MT_ROW.findall(body)
+    if not hits:
+        raise RuntimeError("회차를 못 읽었습니다 (응답 %d자). "
+                           "/api/cinema/diag 의 mtgi 항목을 확인하세요." % len(body))
+    rows, seen = [], set()
+    for start, title in hits:
+        title = title.strip()
+        if not title or MT_TIME_ONLY.match(title):
+            continue
+        st = _hhmm(start)
+        if not st:
+            continue
+        key = (title, st)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append([title, t["name"], day[5:], st, 100, 3, "", ""])
+    if not rows:
+        raise RuntimeError("제목을 못 가려냈습니다 (후보 %d개)" % len(hits))
+    return rows
+
+
+MT_TIME_ONLY = re.compile(r"^[\d:\s.·-]+$")
+
+
+FETCH = {"dureraum": _fetch_dureraum, "cgv": _fetch_cgv, "mtgi": _fetch_mtgi,
          "lotte": _fetch_lotte, "megabox": _fetch_megabox}
 
 
@@ -442,6 +499,22 @@ def diag():
     except Exception as e:
         mb = {"error": "%s: %s" % (type(e).__name__, str(e)[:200])}
     out["megabox"] = mb
+
+    # ── 모퉁이극장 응답 살펴보기 ──
+    try:
+        body = _mt_raw(datetime.now(KST).strftime("%Y-%m-%d"))
+        mt = {"len": len(body), "isJSON": body.lstrip().startswith(("{", "["))}
+        mt["times"] = sorted(set(re.findall(r"\b(?:[01]?\d|2[0-3]):[0-5]\d\b", body)))[:12]
+        mt["dates"] = sorted(set(re.findall(r"\b20\d{6}\b", body)))[:8]
+        # 회차가 어떤 표시 안에 들어 있는지 단서
+        mt["classes"] = sorted(set(re.findall(r'class="([a-zA-Z0-9_ -]{3,30})"', body)))[:25]
+        txt = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", body)
+        txt = re.sub(r"<[^>]+>", " ", txt)
+        mt["text"] = re.sub(r"\s+", " ", txt).strip()[:400]
+        mt["rowsMatched"] = len(MT_ROW.findall(body))
+    except Exception as e:
+        mt = {"error": "%s: %s" % (type(e).__name__, str(e)[:200])}
+    out["mtgi"] = mt
 
     return jsonify(out)
 
