@@ -178,7 +178,14 @@ def _fetch_cgv(t, day):
     try:
         data = (json.loads(body) or {}).get("data") or []
     except Exception:
-        raise RuntimeError("CGV 응답이 JSON 이 아닙니다: " + body[:70].replace("\n", " "))
+        # HTML 이 오면 차단 안내나 점검 페이지입니다.
+        # <title> 이나 본문 첫 글자를 뽑아 무엇인지 알 수 있게 합니다.
+        import re as _re
+        t = _re.search(r"<title[^>]*>(.*?)</title>", body, _re.S | _re.I)
+        txt = _re.sub(r"<[^>]+>", " ", body)
+        txt = _re.sub(r"\s+", " ", txt).strip()
+        raise RuntimeError("CGV 가 HTML 을 돌려줬습니다 | title=%s | 본문=%s"
+                           % ((t.group(1).strip()[:60] if t else "없음"), txt[:160]))
 
     rows, seen = [], set()
     for it in data:
@@ -248,6 +255,33 @@ def _get(t, day):
     with _lock:
         _cache[ck] = (_time.time(), rows)
     return rows
+
+
+@bp.route("/api/cinema/diag")
+def diag():
+    """CGV 가 막힐 때 원인을 가리기 위한 진단.
+       서버의 바깥 IP 와, CGV 가 실제로 돌려주는 것을 그대로 보여 줍니다."""
+    out = {}
+
+    # 이 서버가 인터넷에 어떤 IP 로 보이는지
+    try:
+        out["myIP"] = requests.get("https://api.ipify.org?format=json",
+                                   timeout=8).json().get("ip")
+    except Exception as e:
+        out["myIP"] = "확인 실패 %s" % type(e).__name__
+
+    url = ("%s?coCd=A420&siteNo=0005&scnYmd=%s&rtctlScopCd=08"
+           % (CGV_URL, datetime.now(KST).strftime("%Y%m%d")))
+
+    for name, fn in (("curl", _cgv_curl), ("requests", _cgv_requests)):
+        try:
+            body = fn(url)
+            out[name] = {"ok": body.lstrip().startswith("{"),
+                         "len": len(body), "head": body[:200]}
+        except Exception as e:
+            out[name] = {"ok": False, "error": str(e)[:250]}
+
+    return jsonify(out)
 
 
 @bp.route("/api/cinema")
