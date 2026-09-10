@@ -4,6 +4,7 @@ import os
 from flask import Flask, jsonify, session, redirect, url_for, request
 from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import db
 
@@ -11,10 +12,15 @@ load_dotenv()
 
 # static_url_path="" — static 폴더의 파일을 주소 맨 위에서 바로 내보냅니다
 app = Flask(__name__, static_folder="static", static_url_path="")
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 app.json.ensure_ascii = False
 
 # 쿠키에 서명하는 데 쓰는 열쇠. 이게 없으면 session 을 쓸 수 없습니다.
 app.secret_key = os.environ["FLASK_SECRET"]
+app.config.update(
+    SESSION_COOKIE_SAMESITE="Lax",   # 구글에서 돌아올 때 쿠키가 실려오게
+    SESSION_COOKIE_HTTPONLY=True,    # 자바스크립트가 쿠키를 못 읽게
+)
 
 oauth = OAuth(app)
 google = oauth.register(
