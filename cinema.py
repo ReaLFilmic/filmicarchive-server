@@ -59,7 +59,10 @@ LT_REF = "https://www.lottecinema.co.kr/NLCHS/Ticketing"
 # 극장 목록. 여기에 한 줄 더하면 그 극장이 화면에 함께 나옵니다.
 THEATERS = [
     {"key": "dureraum", "name": "영화의전당", "kind": "dureraum"},
-    {"key": "cgv-seomyeon", "name": "CGV 서면", "kind": "cgv", "site": "0005"},
+    # CGV 는 서버 IP 를 보고 막는 경우가 있습니다. 막히면 아래 줄의
+    # "on" 을 False 로 바꾸면 나머지 세 곳만 받아옵니다.
+    {"key": "cgv-seomyeon", "name": "CGV 서면", "kind": "cgv",
+     "site": "0005", "on": True},
     {"key": "lotte-gwangbok", "name": "롯데시네마 광복",
      "kind": "lotte", "cid": "1|0101|2009"},
     {"key": "lotte-busan", "name": "롯데시네마 부산본점",
@@ -276,8 +279,21 @@ def diag():
     for name, fn in (("curl", _cgv_curl), ("requests", _cgv_requests)):
         try:
             body = fn(url)
-            out[name] = {"ok": body.lstrip().startswith("{"),
-                         "len": len(body), "head": body[:200]}
+            ok = body.lstrip().startswith("{")
+            info = {"ok": ok, "len": len(body)}
+            if ok:
+                info["head"] = body[:120]
+            else:
+                # 태그를 걷어내고 사람이 읽는 글자만 남깁니다.
+                # CSS 만 보여 주면 무슨 페이지인지 알 수 없습니다.
+                import re as _re
+                t = _re.search(r"<title[^>]*>(.*?)</title>", body, _re.S | _re.I)
+                b = _re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", body)
+                b = _re.sub(r"<[^>]+>", " ", b)
+                b = _re.sub(r"\s+", " ", b).strip()
+                info["title"] = t.group(1).strip()[:80] if t else "없음"
+                info["text"] = b[:400]
+            out[name] = info
         except Exception as e:
             out[name] = {"ok": False, "error": str(e)[:250]}
 
@@ -300,7 +316,9 @@ def cinema():
 
     # 특정 극장만 받고 싶을 때: ?only=cgv-seomyeon,dureraum
     only = [x.strip() for x in (request.args.get("only") or "").split(",") if x.strip()]
-    picked = [t for t in THEATERS if not only or t["key"] in only]
+    picked = [t for t in THEATERS
+              if (t.get("on", True) or t["key"] in only)
+              and (not only or t["key"] in only)]
 
     jobs = [(t, (base + timedelta(days=i)).strftime("%Y-%m-%d"))
             for t in picked for i in range(days)]
