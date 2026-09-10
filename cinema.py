@@ -56,6 +56,10 @@ CGV_REF = "https://cgv.co.kr/cnm/movieBook/cinema"
 LT_URL = "https://www.lottecinema.co.kr/LCWS/Ticketing/TicketingData.aspx"
 LT_REF = "https://www.lottecinema.co.kr/NLCHS/Ticketing"
 
+# ── 메가박스 ────────────────────────────────────────
+MB_URL = "https://www.megabox.co.kr/on/oh/ohc/Brch/schedulePage.do"
+MB_REF = "https://www.megabox.co.kr/theater/time"
+
 # 극장 목록. 여기에 한 줄 더하면 그 극장이 화면에 함께 나옵니다.
 THEATERS = [
     {"key": "dureraum", "name": "영화의전당", "kind": "dureraum"},
@@ -67,6 +71,10 @@ THEATERS = [
      "kind": "lotte", "cid": "1|0101|2009"},
     {"key": "lotte-busan", "name": "롯데시네마 부산본점",
      "kind": "lotte", "cid": "1|0101|2004"},
+    # 메가박스는 아직 응답 구조를 확인하지 못했습니다.
+    # /api/cinema/diag 로 확인한 뒤 정규식을 맞추고 on 을 True 로 바꾸세요.
+    {"key": "megabox-seomyeon", "name": "메가박스 서면대한",
+     "kind": "megabox", "brch": "0082", "on": False},
 ]
 
 # ── 캐시 ────────────────────────────────────────────
@@ -245,7 +253,68 @@ def _fetch_lotte(t, day):
     return rows
 
 
-FETCH = {"dureraum": _fetch_dureraum, "cgv": _fetch_cgv, "lotte": _fetch_lotte}
+def _megabox_raw(brch, day):
+    """메가박스는 schedulePage.do 에 POST 로 지점 번호를 보냅니다.
+       브라우저가 보내는 본문에는 날짜가 없어, 응답이 여러 날을 함께 주는지
+       그날치만 주는지 확인이 필요합니다. 날짜 칸 이름 후보를 함께 넣어
+       받아들이는 쪽이면 걸러지고, 무시하면 그냥 무시됩니다."""
+    payload = {
+        "masterType": "brch", "brchNo": brch, "brchNo1": brch,
+        "firstAt": "Y",
+        # 날짜 칸 이름 후보. 서버가 모르는 값은 대개 무시합니다.
+        "playDe": day.replace("-", ""), "playDate": day.replace("-", ""),
+    }
+    r = requests.post(MB_URL, json=payload, headers={
+        "User-Agent": UA, "Referer": MB_REF,
+        "Content-Type": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Accept-Language": "ko-KR,ko;q=0.9",
+    }, timeout=TIMEOUT)
+    if r.status_code != 200:
+        raise RuntimeError("HTTP %d" % r.status_code)
+    r.encoding = r.apparent_encoding or "utf-8"
+    return r.text
+
+
+# 메가박스 HTML 한 회차를 뽑는 규칙.
+# 실제 구조를 확인하기 전이라 넉넉하게 잡아 두었습니다.
+MB_ROW = re.compile(
+    r'data-no="[^"]*"[\s\S]{0,400}?data-play-de="(\d{8})"'
+    r'[\s\S]{0,400}?data-play-strt-tm="(\d{2}:\d{2})"'
+    r'[\s\S]{0,400}?data-play-end-tm="(\d{2}:\d{2})"'
+    r'[\s\S]{0,600}?data-theab-nm="([^"]*)"'
+    r'[\s\S]{0,600}?data-movie-nm="([^"]*)"'
+)
+
+
+def _fetch_megabox(t, day):
+    body = _megabox_raw(t["brch"], day)
+
+    rows, seen = [], set()
+    want = day.replace("-", "")
+    for m in MB_ROW.finditer(body):
+        de, st, en, hall, title = m.groups()
+        if de != want:
+            continue                      # 응답이 여러 날을 주면 그날치만 씁니다
+        title = title.strip()
+        if not title:
+            continue
+        venue = (t["name"] + " " + hall.strip()) if hall.strip() else t["name"]
+        key = (title, venue, st)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append([title, venue, day[5:], st, _mins(st, en), 3, "", ""])
+
+    if not rows:
+        raise RuntimeError("회차를 못 읽었습니다 (응답 %d자). "
+                           "/api/cinema/diag 로 응답 모양을 확인하세요." % len(body))
+    return rows
+
+
+FETCH = {"dureraum": _fetch_dureraum, "cgv": _fetch_cgv,
+         "lotte": _fetch_lotte, "megabox": _fetch_megabox}
 
 
 def _get(t, day):
@@ -296,6 +365,27 @@ def diag():
             out[name] = info
         except Exception as e:
             out[name] = {"ok": False, "error": str(e)[:250]}
+
+    # ── 메가박스 응답 구조 살펴보기 ──
+    # 아직 정규식을 못 맞춘 상태라, 무엇이 오는지 그대로 보여 줍니다.
+    try:
+        body = _megabox_raw("0082", datetime.now(KST).strftime("%Y-%m-%d"))
+        mb = {"len": len(body), "isJSON": body.lstrip().startswith(("{", "["))}
+
+        # 회차 정보가 어떤 이름으로 들어 있는지 찾아 봅니다
+        attrs = sorted(set(re.findall(r'data-[a-z-]+', body)))
+        mb["dataAttrs"] = attrs[:25]
+        mb["times"] = re.findall(r'\b([01]\d|2[0-3]):[0-5]\d\b', body)[:8]
+        mb["dates"] = sorted(set(re.findall(r'\b20\d{6}\b', body)))[:9]
+        mb["rowsMatched"] = len(MB_ROW.findall(body))
+
+        # 사람이 읽는 글자 일부
+        txt = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", body)
+        txt = re.sub(r"<[^>]+>", " ", txt)
+        mb["text"] = re.sub(r"\s+", " ", txt).strip()[:300]
+    except Exception as e:
+        mb = {"error": "%s: %s" % (type(e).__name__, str(e)[:200])}
+    out["megabox"] = mb
 
     return jsonify(out)
 
