@@ -287,9 +287,30 @@ def _megabox_raw(brch, day):
 MB_TIME = re.compile(r"^\d{1,2}:\d{2}$")
 
 
+def _mb_key(d, *pats):
+    """칸 이름을 정확히 맞히지 않고 패턴으로 찾습니다.
+       메가박스는 playStartTime · playStrtTm 처럼 판마다 이름이 조금씩
+       달라, 이름을 나열하는 방식으로는 계속 어긋납니다."""
+    for k in d:
+        low = k.lower()
+        for need in pats:
+            if all(w in low for w in need):
+                return d[k]
+    return None
+
+
+def _mb_start(d):
+    return _mb_key(d, ("play", "start"), ("play", "strt"), ("start", "tm"),
+                      ("strt", "tm"), ("starttime",))
+
+
+def _mb_title(d):
+    return _mb_key(d, ("movie", "nm"), ("movie", "name"), ("rpst", "nm"))
+
+
 def _mb_pick(node, out):
     """JSON 을 돌며 회차로 보이는 사전을 모읍니다.
-       시작 시각처럼 생긴 값과 제목처럼 생긴 값이 함께 있으면 회차로 봅니다."""
+       시각처럼 생긴 값과 제목이 함께 있으면 회차로 봅니다."""
     if isinstance(node, list):
         for v in node:
             _mb_pick(v, out)
@@ -297,16 +318,8 @@ def _mb_pick(node, out):
     if not isinstance(node, dict):
         return
 
-    keys = {k.lower(): k for k in node}
-    def find(*names):
-        for n in names:
-            if n in keys:
-                return node[keys[n]]
-        return None
-
-    start = find("playstrttime", "playstrttm", "starttime", "playtm")
-    title = find("movienm", "moviename", "movienmkr", "rpstmovienm")
-    if start and title and MB_TIME.match(str(start).strip()):
+    st, ti = _mb_start(node), _mb_title(node)
+    if st and ti and MB_TIME.match(str(st).strip()):
         out.append(node)
         return
 
@@ -330,24 +343,19 @@ def _fetch_megabox(t, day):
     want = day.replace("-", "")
     rows, seen = [], set()
     for it in found:
-        keys = {k.lower(): k for k in it}
-        def g(*names):
-            for n in names:
-                if n in keys:
-                    return it[keys[n]]
-            return None
-
-        de = str(g("playde", "playdate", "playymd") or "").replace("-", "")
+        de = str(_mb_key(it, ("play", "de"), ("play", "date"), ("play", "ymd"))
+                 or "").replace("-", "")
         if de and de != want:
             continue                        # 여러 날이 섞여 오면 그날치만
-        start = _hhmm(g("playstrttime", "playstrttm", "starttime", "playtm"))
+        start = _hhmm(_mb_start(it))
         if not start:
             continue
-        end = _hhmm(g("playendtime", "playendtm", "endtime")) or start
-        title = str(g("movienm", "moviename", "movienmkr", "rpstmovienm") or "").strip()
+        end = _hhmm(_mb_key(it, ("play", "end"), ("end", "tm"), ("endtime",))) or start
+        title = str(_mb_title(it) or "").strip()
         if not title:
             continue
-        hall = str(g("theabnm", "theabname", "screennm", "theatnm") or "").strip()
+        hall = str(_mb_key(it, ("theab", "nm"), ("theab", "name"),
+                               ("screen", "nm"), ("theat", "nm")) or "").strip()
         venue = (t["name"] + " " + hall) if hall else t["name"]
 
         key = (title, venue, start)
@@ -355,9 +363,10 @@ def _fetch_megabox(t, day):
             continue
         seen.add(key)
 
-        # 남은 좌석. 이름이 여러 가지라 있는 대로 받습니다.
-        left = g("restseatcnt", "restseat", "frseatcnt", "reseatcnt")
-        total = g("totseatcnt", "totalseatcount", "seatcnt")
+        left = _mb_key(it, ("rest", "seat"), ("able", "seat"), ("fr", "seat"))
+        # ("seat","cnt") 처럼 느슨한 조건을 앞에 두면 restSeatCnt 를 먼저
+        # 물어 총석이 잔여와 같아집니다. 좁은 조건부터 봅니다.
+        total = _mb_key(it, ("tot", "seat"), ("total", "seat"))
         rows.append([title, venue, day[5:], start, _mins(start, end), 3,
                      "" if left is None else left,
                      "" if total is None else total])
@@ -487,7 +496,13 @@ def diag():
             mb["rowsFound"] = len(found)
             if found:
                 mb["sampleKeys"] = sorted(found[0])[:30]
-                mb["sample"] = {k: str(v)[:24] for k, v in list(found[0].items())[:12]}
+            else:
+                # 못 찾았으면 megaMap 안 목록들의 첫 항목 칸 이름을 보여 줍니다.
+                probe = {}
+                for k, v in (mm or {}).items():
+                    if isinstance(v, list) and v and isinstance(v[0], dict):
+                        probe[k] = {"n": len(v), "keys": sorted(v[0])[:30]}
+                mb["lists"] = probe
         except Exception as e:
             mb["parseError"] = "%s: %s" % (type(e).__name__, str(e)[:120])
         mb["dates"] = sorted(set(re.findall(r'\b20\d{6}\b', body)))[:9]
