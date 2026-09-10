@@ -124,25 +124,38 @@ def _cgv_curl(url):
     """CGV 는 requests 로 부르면 403 입니다. 헤더를 똑같이 맞춰도 막히는데,
        TLS 지문을 보고 파이썬 클라이언트를 걸러내는 것으로 보입니다.
        curl 로는 같은 요청이 200 이라 curl 을 실행해 받아옵니다."""
-    out = subprocess.run(
-        ["curl", "-sS", "--compressed", "-m", str(TIMEOUT),
-         "-A", UA, "-e", CGV_REF, "-H", "Accept: application/json", url],
-        capture_output=True, timeout=TIMEOUT + 4)
+    try:
+        out = subprocess.run(
+            ["curl", "-sS", "--compressed", "-m", str(TIMEOUT),
+             "-A", UA, "-e", CGV_REF, "-H", "Accept: application/json", url],
+            capture_output=True, timeout=TIMEOUT + 4)
+    except FileNotFoundError:
+        raise RuntimeError("이 서버에 curl 이 없습니다")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("curl 시간 초과 — 서버에서 CGV 에 못 닿습니다")
     if out.returncode != 0:
-        raise RuntimeError("curl %d: %s" % (
+        raise RuntimeError("curl 종료코드 %d: %s" % (
             out.returncode, out.stderr.decode("utf-8", "replace")[:90]))
-    return out.stdout.decode("utf-8", "replace")
+    body = out.stdout.decode("utf-8", "replace")
+    if not body.strip():
+        raise RuntimeError("curl 이 빈 응답을 받았습니다")
+    return body
 
 
 def _cgv_requests(url):
     """curl 이 없는 환경을 위한 보조 경로. 막히면 예외를 냅니다."""
-    r = requests.get(url, headers={
-        "User-Agent": UA, "Referer": CGV_REF,
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "ko-KR,ko;q=0.9",
-    }, timeout=TIMEOUT)
+    try:
+        r = requests.get(url, headers={
+            "User-Agent": UA, "Referer": CGV_REF,
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "ko-KR,ko;q=0.9",
+        }, timeout=TIMEOUT)
+    except requests.exceptions.Timeout:
+        raise RuntimeError("시간 초과 — 서버에서 CGV 에 못 닿습니다")
+    except Exception as e:
+        raise RuntimeError("연결 실패 %s" % type(e).__name__)
     if r.status_code != 200:
-        raise RuntimeError("requests HTTP %d" % r.status_code)
+        raise RuntimeError("HTTP %d (차단으로 보입니다)" % r.status_code)
     return r.text
 
 
@@ -272,8 +285,10 @@ def cinema():
                 with qlock:
                     all_rows.extend(got)
             except Exception as e:
+                # 예외 종류만 남기면 원인을 알 수 없습니다. 메시지까지 같이 적습니다.
                 with qlock:
-                    failed.append("%s %s (%s)" % (t["name"], day, type(e).__name__))
+                    failed.append("%s %s — %s: %s" % (
+                        t["name"], day, type(e).__name__, str(e)[:200]))
             _time.sleep(0.15)
 
     # 극장 넷 × 7일 = 28건. 여섯씩 동시에 받습니다.
@@ -283,6 +298,8 @@ def cinema():
     for th in ths:
         th.join()
 
+    # 한 극장이 막혀도 나머지는 보여 줘야 합니다.
+    # 전부 실패했을 때만 오류로 돌려줍니다.
     if not all_rows:
         return jsonify({"ok": False, "failed": failed,
                         "error": "회차를 하나도 받지 못했습니다."}), 502
