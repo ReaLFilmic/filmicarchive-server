@@ -63,7 +63,7 @@ def callback():
         conn.commit()
 
     session["user_id"] = uid          # 번호표 발급
-    return redirect("/me")
+    return redirect("/")
 
 
 @app.route("/me")
