@@ -14498,6 +14498,16 @@ window.addEventListener("message", function (e) {
   .body{display:flex;position:relative}
   .gut{width:44px;flex:none;position:relative}
   .gut span{position:absolute;right:6px;font-size:9.5px;color:#5E564A;transform:translateY(-50%)}
+  /* 극장 탭 — 날짜 탭과 구분되게 조금 작고 둥글게 */
+  .houses{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0 14px}
+  .houses button{font-family:inherit;font-size:12.5px;padding:6px 12px;
+    border-radius:999px;border:1px solid var(--edge);background:none;
+    color:var(--mut);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+  .houses button i{font-style:normal;font-size:10.5px;opacity:.7}
+  .houses button:hover{color:var(--paper)}
+  .houses button[aria-pressed="true"]{background:var(--lamp);border-color:var(--lamp);
+    color:#2A1C08;font-weight:600}
+  .empty{padding:26px 4px;font-size:13px;color:var(--dim)}
   .lanes{flex:1;display:flex;position:relative}
   .lane{flex:1;min-width:92px;position:relative;border-left:1px solid #241F17}
   .hr{position:absolute;left:0;right:0;border-top:1px solid #201B14}
@@ -15147,6 +15157,7 @@ window.addEventListener("message", function (e) {
   <div class="cols">
     <div>
       <div class="tabs" id="tabs"></div>
+  <div class="houses" id="houses"></div>
       <div class="board" id="board"></div>
   <div class="boardout">
     <button class="tinyb" id="dlday">이 날 시간표 PNG로 저장</button>
@@ -15303,14 +15314,37 @@ window.addEventListener("message", function (e) {
   var $ = function(id){ return document.getElementById(id); };
 
   // ---------- CSV ----------
+  /* 제목에 쉼표가 든 영화("올공, 2030 나라를 살리다")가 있습니다.
+     CSV 는 그런 값을 따옴표로 감싸므로 따옴표 안의 쉼표는 건너뛰어야 합니다.
+     split(",") 만 쓰면 열이 한 칸씩 밀려, 극장 이름이 날짜 자리로 들어가
+     날짜 탭에 "롯데시네마 광복 3관일" 같은 항목이 섞여 나옵니다. */
+  function splitCSV(line){
+    var out = [], cell = "", q = false;
+    for (var i = 0; i < line.length; i++) {
+      var c = line.charAt(i);
+      if (q) {
+        if (c === '"') {
+          if (line.charAt(i+1) === '"') { cell += '"'; i++; }
+          else q = false;
+        } else cell += c;
+      }
+      else if (c === '"') q = true;
+      else if (c === ",") { out.push(cell); cell = ""; }
+      else cell += c;
+    }
+    out.push(cell);
+    return out;
+  }
+
   function parse(text){
-    var rows = text.trim().split(/\r?\n/).map(function(l){ return l.split(","); });
+    var rows = text.trim().split(/\r?\n/).map(splitCSV);
     var head = rows.shift().map(function(h){ return h.trim(); });
     var ix = {};
     head.forEach(function(h,i){ ix[h]=i; });
     var out = [];
     rows.forEach(function(r,n){
       if (r.length < 5) return;
+      if (!/^\d{2}-\d{2}$/.test((r[ix["date"]]||"").trim())) return;
       var g = function(k){ return (r[ix[k]]||"").trim(); };
       var hm = g("start").split(":");
       out.push({
@@ -15787,7 +15821,11 @@ window.addEventListener("message", function (e) {
       var b = document.createElement("button");
       b.textContent = d.replace("-", "월 ") + "일";
       b.setAttribute("aria-pressed", d===day ? "true":"false");
-      b.addEventListener("click", function(){ day=d; renderTabs(); renderBoard(); });
+      b.addEventListener("click", function(){
+        day = d;
+        house = null;              /* 날짜가 바뀌면 극장 탭도 다시 정합니다 */
+        renderTabs(); renderHouses(); renderBoard();
+      });
       $("tabs").appendChild(b);
     });
   }
@@ -15849,6 +15887,48 @@ window.addEventListener("message", function (e) {
     };
   }
 
+  /* ── 극장별로 나눠 보기 ──
+     네 극장을 합치면 상영관이 37개가 되어 열이 화면을 넘칩니다.
+     극장 탭을 두고 한 번에 한 곳만 보여 줍니다. */
+  var house = null;                     /* 지금 고른 극장. null 이면 전체 */
+
+  function houseOf(venue){
+    var v = String(venue || "");
+    if (v.indexOf("영화의전당") === 0) return "영화의전당";
+    if (v.indexOf("CGV") === 0) return v.split(" ").slice(0, 2).join(" ");
+    if (v.indexOf("롯데시네마") === 0) return v.split(" ").slice(0, 2).join(" ");
+    return v.split(" ")[0];
+  }
+
+  function houseList(){
+    var seen = {}, out = [];
+    S.filter(function(s){ return s.date === day; }).forEach(function(s){
+      var h = houseOf(s.venue);
+      if (!seen[h]) { seen[h] = 1; out.push(h); }
+    });
+    return out;
+  }
+
+  function renderHouses(){
+    var el = $("houses");
+    if (!el) return;
+    var list = houseList();
+    if (list.length < 2) { el.innerHTML = ""; return; }   /* 한 곳뿐이면 숨김 */
+    if (list.indexOf(house) < 0) house = list[0];
+    el.innerHTML = list.map(function(h){
+      var n = S.filter(function(s){
+        return s.date === day && houseOf(s.venue) === h; }).length;
+      return '<button data-house="' + h + '" aria-pressed="' +
+        (h === house) + '">' + h + '<i>' + n + '</i></button>';
+    }).join("");
+    Array.prototype.forEach.call(el.querySelectorAll("[data-house]"), function(b){
+      b.addEventListener("click", function(){
+        house = b.dataset.house;
+        renderHouses(); renderBoard();
+      });
+    });
+  }
+
   function renderBoard(){
     if (narrow()) return renderList();
 
@@ -15857,7 +15937,18 @@ window.addEventListener("message", function (e) {
        두 번 처리돼 담았다가 곧바로 빠집니다. */
     $("board").onclick = null;
 
-    var todays = S.filter(function(s){ return s.date === day; });
+    /* renderHouses 보다 먼저 불릴 수 있으므로 여기서 한 번 더 정합니다.
+       안 그러면 첫 그림에서 네 극장이 합쳐져 열이 37개가 됩니다. */
+    var list = houseList();
+    if (list.length > 1 && list.indexOf(house) < 0) house = list[0];
+
+    var todays = S.filter(function(s){
+      return s.date === day && (!house || houseOf(s.venue) === house);
+    });
+    if (!todays.length) {
+      $("board").innerHTML = '<p class="empty">이 날 이 극장에는 회차가 없습니다.</p>';
+      return;
+    }
     var venues = ORDER.filter(function(v){
       return todays.some(function(s){ return s.venue === v; });
     });
@@ -15870,8 +15961,11 @@ window.addEventListener("message", function (e) {
     lo = Math.floor(lo/60)*60; hi = Math.ceil(hi/60)*60;
     var PPM = 0.62, H = (hi-lo)*PPM;
 
+    /* 열머리에서 극장 이름을 떼고 상영관만 남깁니다.
+       한 극장만 보고 있으니 이름이 열마다 반복될 이유가 없습니다. */
     var head = '<div class="head">' + venues.map(function(v){
-      return "<div>"+v+"</div>"; }).join("") + "</div>";
+      var short = house ? String(v).slice(house.length).trim() || v : v;
+      return "<div>"+short+"</div>"; }).join("") + "</div>";
 
     /* 이웃한 두 열 사이에 이동시간을 얹습니다.
        시간표를 보면서 "여기서 저기로 몇 분" 을 바로 알 수 있게 하려는 것입니다.
@@ -15993,6 +16087,7 @@ window.addEventListener("message", function (e) {
     if (DAYS.indexOf(day) < 0) day = DAYS[0];
     picked = {};
     renderTabs(); renderTravel(); renderBoard();
+    renderHouses();
   }
 
   $("auto").addEventListener("click", function(){
@@ -16704,14 +16799,37 @@ window.addEventListener("message", function (e) {
   var $ = function(id){ return document.getElementById(id); };
 
   // ---------- CSV ----------
+  /* 제목에 쉼표가 든 영화("올공, 2030 나라를 살리다")가 있습니다.
+     CSV 는 그런 값을 따옴표로 감싸므로 따옴표 안의 쉼표는 건너뛰어야 합니다.
+     split(",") 만 쓰면 열이 한 칸씩 밀려, 극장 이름이 날짜 자리로 들어가
+     날짜 탭에 "롯데시네마 광복 3관일" 같은 항목이 섞여 나옵니다. */
+  function splitCSV(line){
+    var out = [], cell = "", q = false;
+    for (var i = 0; i < line.length; i++) {
+      var c = line.charAt(i);
+      if (q) {
+        if (c === '"') {
+          if (line.charAt(i+1) === '"') { cell += '"'; i++; }
+          else q = false;
+        } else cell += c;
+      }
+      else if (c === '"') q = true;
+      else if (c === ",") { out.push(cell); cell = ""; }
+      else cell += c;
+    }
+    out.push(cell);
+    return out;
+  }
+
   function parse(text){
-    var rows = text.trim().split(/\r?\n/).map(function(l){ return l.split(","); });
+    var rows = text.trim().split(/\r?\n/).map(splitCSV);
     var head = rows.shift().map(function(h){ return h.trim(); });
     var ix = {};
     head.forEach(function(h,i){ ix[h]=i; });
     var out = [];
     rows.forEach(function(r,n){
       if (r.length < 5) return;
+      if (!/^\d{2}-\d{2}$/.test((r[ix["date"]]||"").trim())) return;
       var g = function(k){ return (r[ix[k]]||"").trim(); };
       var hm = g("start").split(":");
       out.push({
