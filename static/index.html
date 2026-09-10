@@ -6225,32 +6225,12 @@ window.addEventListener("message", function (e) {
   function asTemp(d, tmdbId) {
     return {
       id: "tmdb-" + tmdbId, tmdbId: tmdbId, temp: true,
-      ko: d.ko || "", en: d.en || "", year: parseInt(d.year, 10) || 0,
-      dir: d.dir || (d.crew || []).filter(function (c) {
-        return c[0] === "감독";
-      }).map(function (c) { return c[1]; })[0] || "",
-      runtime: d.runtime || 0,
-
-      /* APP.preview 는 genres 를 "SF · 모험" 처럼 글자로 돌려주는데
-         기록 화면은 배열로 기대해 f.genres.map 이 터졌습니다.
-         여기서 형태를 맞춰 줍니다. */
-      genres: Array.isArray(d.genres)
-        ? d.genres
-        : String(d.genres || "").split("·").map(function (x) {
-            return x.trim();
-          }).filter(Boolean),
-
-      overview: d.overview || "",
-      crew: Array.isArray(d.crew) ? d.crew : [],
-      cast: Array.isArray(d.cast) ? d.cast : [],
-      crit: [],
-      imdb: d.imdb || 0,
-      pub: d.pub || (d.imdb ? Math.round(d.imdb / 2 * 10) / 10 : 0),
-      stills: Array.isArray(d.stills) ? d.stills : [],
-      videos: Array.isArray(d.videos) ? d.videos : [],
-      poster: d.poster || null,
-      /* 서재에 없는 임시 작품이라 자리 번호는 맨 뒤로 둡니다. */
-      rank: 999999,
+      ko: d.ko || "", en: d.en || "", year: d.year || 0,
+      dir: d.dir || "", runtime: d.runtime || 0,
+      genres: d.genres || [], overview: d.overview || "",
+      crew: d.crew || [], cast: d.cast || [], crit: [],
+      imdb: d.imdb || 0, pub: d.pub || 0,
+      stills: d.stills || [], videos: d.videos || [],
       bg: d.bg || "#22221C", fg: d.fg || "#EDEBE0"
     };
   }
@@ -6596,8 +6576,37 @@ window.addEventListener("message", function (e) {
     if (t.length < 2 || !APP.canSearch()) return;
     /* 서재에 없는 영화도 찾을 수 있게 TMDB 전체를 함께 뒤집니다.
        타이핑이 멈춘 뒤에 한 번만 요청합니다. */
-    tmdbTimer = setTimeout(function () { wideSearch(t); }, 420);
+    tmdbTimer = setTimeout(function () {
+      wideSearch(t);
+      peopleSearch(t);          /* 감독·배우 이름으로도 함께 찾습니다 */
+    }, 420);
   });
+
+  /* 사람 이름으로 찾은 결과. 제목 검색과 따로 묶어 보여 줍니다. */
+  function peopleSearch(t) {
+    APP.searchPeople(t).then(function (p) {
+      if (!p || !p.films.length) return;
+      if (q.value.trim() !== t) return;          /* 그새 다른 걸 치면 버립니다 */
+      if (res.querySelector(".wide.person")) return;
+
+      var list = p.films.slice(0, 8);
+      var block = '<div class="wide person"><span class="wl">' +
+        p.name + " " + p.job + " 작품</span>" +
+        list.map(function (m) {
+          var have = APP.findByTmdb(m.id);
+          var year = String(m.release_date || "").slice(0, 4);
+          /* 서재에 있으면 그 작품을 열고, 없으면 미리 보기로 엽니다. */
+          return '<button ' + (have ? 'data-id="' + have.id + '"'
+                                    : 'data-tmdb="' + m.id + '"') + '>' +
+            '<span class="sw" style="background:#3A3A34"></span>' +
+            (m.title || m.original_title || "") +
+            '<span class="yr">' + year + "</span>" +
+            (have ? "" : '<span class="plus">보기</span>') + "</button>";
+        }).join("") + "</div>";
+      res.insertAdjacentHTML("beforeend", block);
+      res.className = "res on";
+    }).catch(function () {});
+  }
 
   function wideSearch(t) {
     APP.searchMovies(t).then(function (hits) {
@@ -18718,6 +18727,60 @@ function film(id) { return FILM_BY_ID[id]; }
   APP.canSearch = function () {
     return (($("key") && $("key").value) || "").replace(/\s+/g, "").length >= 20;
   };
+  /* ── 사람 이름으로 찾기 ──
+     /search/movie 는 제목만 찾습니다. "크리스토퍼 놀란" 으로는 한 편도
+     안 나오는 게 당연합니다. 사람을 먼저 찾고, 그 사람의 작품을 가져옵니다.
+
+     감독을 먼저 봅니다. 배우로도 이름이 걸리는 사람이 많은데,
+     영화를 찾을 때는 대개 감독 쪽을 기대하기 때문입니다. */
+  APP.searchPeople = function (q) {
+    var key = ($("key").value || "").replace(/\s+/g, "");
+    if (!q || key.length < 20) return Promise.resolve(null);
+    var a = auth(key);
+    return retry(function () {
+      return tmdb("/search/person", a, "&query=" + encodeURIComponent(q));
+    }, 2).then(function (d) {
+      var list = (d && d.results || []).filter(function (p) {
+        return (p.known_for_department === "Directing" ||
+                p.known_for_department === "Acting");
+      });
+      if (!list.length) return null;
+
+      /* 감독을 우선하고, 그다음 인기순 */
+      list.sort(function (x, y) {
+        var dx = x.known_for_department === "Directing" ? 1 : 0;
+        var dy = y.known_for_department === "Directing" ? 1 : 0;
+        if (dx !== dy) return dy - dx;
+        return (y.popularity || 0) - (x.popularity || 0);
+      });
+      var p = list[0];
+
+      return retry(function () {
+        return tmdb("/person/" + p.id + "/movie_credits", a, "");
+      }, 2).then(function (c) {
+        var asDir = (c.crew || []).filter(function (x) { return x.job === "Director"; });
+        /* 감독 작품이 있으면 그것만, 없으면 출연작을 씁니다 */
+        var films = asDir.length ? asDir : (c.cast || []);
+
+        /* 같은 영화가 여러 번 들어오는 경우가 있어 번호로 한 번 걸러냅니다 */
+        var seen = {}, out = [];
+        films.forEach(function (m) {
+          if (!m.id || seen[m.id]) return;
+          seen[m.id] = 1;
+          out.push(m);
+        });
+        out.sort(function (x, y) {
+          return String(y.release_date || "").localeCompare(String(x.release_date || ""));
+        });
+        return {
+          name: p.name,
+          job: asDir.length ? "감독" : "출연",
+          films: out
+        };
+      });
+    }).catch(function () { return null; });
+  };
+
   APP.searchMovies = function (q, year) {
     var key = ($("key").value || "").replace(/\s+/g, "");
     if (key.length < 20) return Promise.reject(new Error("TMDB 키가 없습니다"));
