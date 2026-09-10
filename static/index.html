@@ -19668,7 +19668,14 @@ function film(id) { return FILM_BY_ID[id]; }
   /* 바깥 스크롤 위치를 보이는 화면에 알려줍니다.
      iframe 은 스크롤이 없으므로 이 값이 있어야 안쪽에서 패널을 따라 내릴 수 있습니다. */
   function pushScroll() {
-    var f = made[current];
+    /* 보이는 iframe 에 보내야 합니다. 부산국제영화제는 하위 탭이 따로 있어
+       current("biff") 와 실제 화면(biffSub) 이 다릅니다. 그래서 current 로
+       찾으면 엉뚱한 iframe 에 보내게 되고, 패널이 스크롤을 못 따라옵니다. */
+    var f = null;
+    for (var k in made) {
+      if (made[k] && !made[k].hidden) { f = made[k]; break; }
+    }
+    if (!f) f = made[current];
     if (!f) return;
     try {
       var r = f.getBoundingClientRect();
