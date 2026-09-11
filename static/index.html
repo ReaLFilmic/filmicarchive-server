@@ -15833,7 +15833,16 @@ window.addEventListener("message", function (e) {
   }
 
   function renderList(){
-    var todays = S.filter(function(s){ return s.date === day; })
+    /* 좁은 화면도 고른 극장만 보여야 합니다.
+       예전에는 여기에 극장 조건이 없어, 폰에서는 탭을 눌러도
+       네 극장 회차가 시간순으로 뒤섞여 나왔습니다. */
+    var list = houseList();
+    if (list.length > 1 && list.indexOf(house) < 0) house = list[0];
+
+    var todays = S.filter(function(s){
+                    return s.date === day &&
+                           (!house || houseOf(s.venue) === house);
+                  })
                   .sort(function(a,b){ return a.start - b.start; });
     var host = $("board");
 
@@ -16225,6 +16234,16 @@ window.addEventListener("message", function (e) {
   .scr i{display:block;line-height:1.45}
   .scr em.few{background:rgba(227,140,70,.30);color:#F0C89A}
   .scr em.sold{background:rgba(163,74,64,.35);color:#E8A9A2}
+  /* 극장 탭 — 날짜 탭과 구분되게 조금 작고 둥글게 */
+  .houses{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0 14px}
+  .houses button{font-family:inherit;font-size:12.5px;padding:6px 12px;
+    border-radius:999px;border:1px solid var(--edge);background:none;
+    color:var(--mut);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+  .houses button i{font-style:normal;font-size:10.5px;opacity:.7}
+  .houses button:hover{color:var(--paper)}
+  .houses button[aria-pressed="true"]{background:var(--lamp);
+    border-color:var(--lamp);color:#2A1C08;font-weight:600}
+  .empty{padding:26px 4px;font-size:13px;color:var(--dim)}
   .lanes{flex:1;display:flex;position:relative}
   .lane{flex:1;min-width:92px;position:relative;border-left:1px solid #241F17}
   .hr{position:absolute;left:0;right:0;border-top:1px solid #201B14}
@@ -16695,6 +16714,7 @@ window.addEventListener("message", function (e) {
   <div class="cols">
     <div>
       <div class="tabs" id="tabs"></div>
+  <div class="houses" id="houses"></div>
       <div class="board" id="board"></div>
   <div class="boardout">
     <button class="tinyb" id="dlday">이 날 시간표 PNG로 저장</button>
@@ -17229,7 +17249,11 @@ window.addEventListener("message", function (e) {
       var b = document.createElement("button");
       b.textContent = d.replace("-", "월 ") + "일";
       b.setAttribute("aria-pressed", d===day ? "true":"false");
-      b.addEventListener("click", function(){ day=d; renderTabs(); renderBoard(); });
+      b.addEventListener("click", function(){
+        day = d;
+        house = null;              /* 날짜가 바뀌면 극장 탭도 다시 정합니다 */
+        renderTabs(); renderHouses(); renderBoard();
+      });
       $("tabs").appendChild(b);
     });
   }
@@ -17247,7 +17271,14 @@ window.addEventListener("message", function (e) {
   }
 
   function renderList(){
-    var todays = S.filter(function(s){ return s.date === day; })
+    /* 좁은 화면도 고른 극장만 보여야 합니다. */
+    var hl = houseList();
+    if (hl.length > 1 && hl.indexOf(house) < 0) house = hl[0];
+
+    var todays = S.filter(function(s){
+                    return s.date === day &&
+                           (!house || houseOf(s.venue) === house);
+                  })
                   .sort(function(a,b){ return a.start - b.start; });
     var host = $("board");
 
@@ -17291,6 +17322,64 @@ window.addEventListener("message", function (e) {
     };
   }
 
+  /* ── 극장별로 나눠 보기 ──
+     영화의전당만 상영관이 다섯이라 venue 가 "영화의전당 중극장" 처럼
+     옵니다. 그 경우만 앞 한 단어로 묶고, 나머지는 이름 그대로 씁니다. */
+  var house = null;
+
+  function houseOf(venue){
+    var v = String(venue || "").trim();
+    return v.indexOf("영화의전당") === 0 ? "영화의전당" : v;
+  }
+
+  /* 탭 순서를 여기서 정합니다. 데이터가 오는 순서를 쓰면
+     그날 어느 극장 회차가 먼저 오느냐에 따라 날마다 바뀝니다. */
+  var HOUSE_ORDER = [
+    "영화의전당",
+    "CGV 센텀시티",
+    "롯데시네마 센텀시티",
+    "영화진흥위원회 표준시사실",
+    "신세계백화점 센텀",
+    "소향씨어터",
+    "시청자미디어센터",
+    "동서대-경남정보대 센텀캠퍼스"
+  ];
+
+  function houseList(){
+    var seen = {};
+    S.filter(function(s){ return s.date === day; }).forEach(function(s){
+      seen[houseOf(s.venue)] = 1;
+    });
+    var out = [];
+    HOUSE_ORDER.forEach(function(h){
+      if (seen[h]) { out.push(h); delete seen[h]; }
+    });
+    Object.keys(seen).sort().forEach(function(h){ out.push(h); });
+    return out;
+  }
+
+  function renderHouses(){
+    var el = $("houses");
+    if (!el) return;
+    var list = houseList();
+    if (list.length < 2) { el.innerHTML = ""; return; }
+    if (list.indexOf(house) < 0) house = list[0];
+
+    el.innerHTML = list.map(function(h){
+      var n = S.filter(function(s){
+        return s.date === day && houseOf(s.venue) === h; }).length;
+      return '<button data-house="' + h + '" aria-pressed="' +
+        (h === house) + '">' + h + '<i>' + n + '</i></button>';
+    }).join("");
+
+    Array.prototype.forEach.call(el.querySelectorAll("[data-house]"), function(b){
+      b.addEventListener("click", function(){
+        house = b.dataset.house;
+        renderHouses(); renderBoard();
+      });
+    });
+  }
+
   function renderBoard(){
     if (narrow()) return renderList();
 
@@ -17299,7 +17388,17 @@ window.addEventListener("message", function (e) {
        두 번 처리돼 담았다가 곧바로 빠집니다. */
     $("board").onclick = null;
 
-    var todays = S.filter(function(s){ return s.date === day; });
+    /* renderHouses 보다 먼저 불릴 수 있으므로 여기서 한 번 더 정합니다. */
+    var hl = houseList();
+    if (hl.length > 1 && hl.indexOf(house) < 0) house = hl[0];
+
+    var todays = S.filter(function(s){
+      return s.date === day && (!house || houseOf(s.venue) === house);
+    });
+    if (!todays.length) {
+      $("board").innerHTML = '<p class="empty">이 날 이 극장에는 상영이 없습니다.</p>';
+      return;
+    }
     var venues = ORDER.filter(function(v){
       return todays.some(function(s){ return s.venue === v; });
     });
@@ -17312,8 +17411,10 @@ window.addEventListener("message", function (e) {
     lo = Math.floor(lo/60)*60; hi = Math.ceil(hi/60)*60;
     var PPM = 0.62, H = (hi-lo)*PPM;
 
+    /* 한 극장만 보고 있으니 열마다 이름이 반복될 이유가 없습니다. */
     var head = '<div class="head">' + venues.map(function(v){
-      return "<div>"+v+"</div>"; }).join("") + "</div>";
+      var short = house ? String(v).slice(house.length).trim() || v : v;
+      return "<div>"+short+"</div>"; }).join("") + "</div>";
 
     /* 이웃한 두 열 사이에 이동시간을 얹습니다.
        시간표를 보면서 "여기서 저기로 몇 분" 을 바로 알 수 있게 하려는 것입니다.
@@ -17435,6 +17536,7 @@ window.addEventListener("message", function (e) {
     if (DAYS.indexOf(day) < 0) day = DAYS[0];
     picked = {};
     renderTabs(); renderTravel(); renderBoard();
+    renderHouses();
   }
 
   $("auto").addEventListener("click", function(){
@@ -17468,6 +17570,32 @@ window.addEventListener("message", function (e) {
   try { startCSV = (APP.savedCSV && APP.savedCSV[MODKEY]) || ""; } catch (e) {}
   $("csv").value = startCSV || SAMPLE;
   boot($("csv").value);
+
+  /* ── biff.kr 에서 자동으로 받아옵니다 ──
+     서버가 상영관별 시간표를 모아 CSV 로 돌려줍니다. */
+  (function autoLoad(){
+    var origin = "";
+    try { origin = window.parent.location.origin; } catch (e) {}
+    if (!origin || origin.indexOf("http") !== 0) return;   /* 파일로 열면 건너뜀 */
+
+    fetch(origin + "/api/biff", { credentials: "same-origin" })
+      .then(function(r){ return r.ok ? r.text() : Promise.reject("HTTP " + r.status); })
+      .then(function(csv){
+        /* 주소가 없으면 404 페이지의 HTML 이 옵니다.
+           그걸 CSV 로 읽으면 화면이 깨지므로 먼저 확인합니다. */
+        if (csv.indexOf("title,venue") !== 0)
+          throw new Error("받은 내용이 시간표가 아닙니다");
+        $("csv").value = csv;
+        boot(csv);
+        try { APP.setCSV(MODKEY, csv); } catch (e) {}
+        try { flash("영화제 시간표를 불러왔습니다.", "ok"); } catch (e) {}
+      })
+      .catch(function(e){
+        /* 실패해도 저장분이나 예시가 이미 떠 있어 화면은 멀쩡합니다. */
+        try { flash("자동 갱신 실패 — " + e + " · 저장해둔 시간표를 씁니다.", "bad"); }
+        catch (x) {}
+      });
+  })();
 })();
 <\/script>
 </body>

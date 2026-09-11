@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 import db
 from cinema import bp as cinema_bp
+from biff import bp as biff_bp
 
 load_dotenv()
 
@@ -18,6 +19,7 @@ app.json.ensure_ascii = False
 app.secret_key = os.environ["FLASK_SECRET"]
 
 app.register_blueprint(cinema_bp)
+app.register_blueprint(biff_bp)
 
 oauth = OAuth(app)
 google = oauth.register(
