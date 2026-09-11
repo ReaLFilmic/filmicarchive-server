@@ -635,9 +635,9 @@ def diag():
         bk["classes"] = sorted(set(re.findall(r'class="([a-zA-Z0-9_ -]{3,28})"', body)))[:20]
 
         # 회차를 가져오는 다른 주소가 있는지 찾습니다.
-        bk["asp"] = sorted(set(re.findall(r"[\"']([^\"' ]*\\.asp[^\"' ]*)[\"']", body)))[:15]
+        bk["asp"] = sorted(set(re.findall(r"[^\"' ]*\.asp[^\"' ]*", body)))[:15]
         bk["funcs"] = sorted(set(re.findall(
-            r"function\\s+([A-Za-z_][A-Za-z0-9_]{2,24})\\s*\\(", body)))[:20]
+            r"function\s+([A-Za-z_]\w{2,24})\s*\(", body)))[:20]
         # div_time 안이 회차 자리로 보입니다.
         m = re.search(r'(?is)<div[^>]*class="[^"]*div_time[^"]*"[\\s\\S]{0,900}', body)
         bk["timeBlock"] = re.sub(r"\\s+", " ", m.group(0))[:400] if m else "없음"
@@ -647,6 +647,17 @@ def diag():
     except Exception as e:
         bk = {"error": "%s: %s" % (type(e).__name__, str(e)[:160])}
     out["bookcosmos"] = bk
+
+    # ── 메가박스가 실제로 회차를 만들어 내는지 ──
+    try:
+        t = [x for x in THEATERS if x["key"] == "megabox-seomyeon"][0]
+        rows = _fetch_megabox(t, datetime.now(KST).strftime("%Y-%m-%d"))
+        out["megaboxRows"] = {"n": len(rows), "first": rows[0] if rows else None,
+                              "on": t.get("on", True)}
+    except Exception as e:
+        out["megaboxRows"] = {"error": "%s: %s" % (type(e).__name__, str(e)[:200]),
+                              "on": [x for x in THEATERS
+                                     if x["key"] == "megabox-seomyeon"][0].get("on", True)}
 
     return jsonify(out)
 
