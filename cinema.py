@@ -87,7 +87,9 @@ THEATERS = [
 # Render 무료 플랜은 15분 쉬면 잠들어 이 캐시가 사라집니다.
 _lock = threading.Lock()
 _cache = {}              # (극장키, "2026-09-11") → (담은 시각, rows)
-_TTL = 3 * 60 * 60       # 잔여좌석이 섞여 있어 6시간은 길다고 보고 3시간
+# 시간표는 하루 종일 안 바뀌지만 잔여좌석은 계속 팔립니다.
+# 둘을 절충해 3시간으로 둡니다. 좌석을 더 정확히 보려면 줄이세요.
+_TTL = 3 * 60 * 60
 
 
 def _hhmm(v):
@@ -464,15 +466,62 @@ FETCH = {"dureraum": _fetch_dureraum, "cgv": _fetch_cgv, "mtgi": _fetch_mtgi,
          "lotte": _fetch_lotte, "megabox": _fetch_megabox}
 
 
+def _db_get(key, day, ttl):
+    """Postgres 에 담아둔 시간표. Render 무료 플랜은 15분 쉬면 잠들어
+       메모리 캐시가 통째로 사라집니다. DB 에 두면 깨어나도 남고,
+       폰과 PC 가 같은 것을 씁니다."""
+    try:
+        import db
+        with db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT rows FROM cinema_cache "
+                    "WHERE theater = %s AND day = %s "
+                    "  AND fetched > now() - make_interval(secs => %s)",
+                    (key, day, ttl))
+                r = cur.fetchone()
+                return r[0] if r else None
+    except Exception:
+        return None          # DB 가 없어도 동작은 해야 합니다
+
+
+def _db_put(key, day, rows):
+    try:
+        import db
+        with db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO cinema_cache (theater, day, rows, fetched) "
+                    "VALUES (%s, %s, %s, now()) "
+                    "ON CONFLICT (theater, day) DO UPDATE SET "
+                    "  rows = EXCLUDED.rows, fetched = now()",
+                    (key, day, json.dumps(rows, ensure_ascii=False)))
+            conn.commit()
+    except Exception:
+        pass
+
+
 def _get(t, day):
     ck = (t["key"], day)
+
+    # ① 메모리 — 가장 빠릅니다
     with _lock:
         hit = _cache.get(ck)
         if hit and (_time.time() - hit[0]) < _TTL:
             return hit[1]
+
+    # ② DB — 서버가 잠들었다 깨어도 남아 있습니다
+    got = _db_get(t["key"], day, _TTL)
+    if got is not None:
+        with _lock:
+            _cache[ck] = (_time.time(), got)
+        return got
+
+    # ③ 극장 사이트
     rows = FETCH[t["kind"]](t, day)
     with _lock:
         _cache[ck] = (_time.time(), rows)
+    _db_put(t["key"], day, rows)
     return rows
 
 
@@ -584,6 +633,14 @@ def diag():
         bk["dates"] = sorted(set(re.findall(r"20\d{2}[-.]?\d{2}[-.]?\d{2}", body)))[:6]
         bk["forms"] = re.findall(r'action="([^"]+)"', body)[:5]
         bk["classes"] = sorted(set(re.findall(r'class="([a-zA-Z0-9_ -]{3,28})"', body)))[:20]
+
+        # 회차를 가져오는 다른 주소가 있는지 찾습니다.
+        bk["asp"] = sorted(set(re.findall(r"[\"']([^\"' ]*\\.asp[^\"' ]*)[\"']", body)))[:15]
+        bk["funcs"] = sorted(set(re.findall(
+            r"function\\s+([A-Za-z_][A-Za-z0-9_]{2,24})\\s*\\(", body)))[:20]
+        # div_time 안이 회차 자리로 보입니다.
+        m = re.search(r'(?is)<div[^>]*class="[^"]*div_time[^"]*"[\\s\\S]{0,900}', body)
+        bk["timeBlock"] = re.sub(r"\\s+", " ", m.group(0))[:400] if m else "없음"
         txt = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", body)
         txt = re.sub(r"<[^>]+>", " ", txt)
         bk["text"] = re.sub(r"\s+", " ", txt).strip()[:300]
