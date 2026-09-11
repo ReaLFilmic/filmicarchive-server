@@ -17199,7 +17199,7 @@ window.addEventListener("message", function (e) {
 
       x.fillStyle = on ? "rgba(42,28,8,.72)" : DIM;
       x.font = "10.5px 'Noto Sans KR', sans-serif";
-      x.fillText(hhmm(s.start) + "–" + hhmm(endOf(s)) + " · " + s.runtime + "분 · ★" + s.priority,
+      x.fillText(hhmm(s.start) + " · ★" + s.priority,
                  cx + 9, y + 36);
     });
 
@@ -17308,7 +17308,8 @@ window.addEventListener("message", function (e) {
       return gap + '<button class="mrow' + (on ? " on" : "") + '" data-id="' + s.id + '">' +
         '<span class="mt">' + hhmm(s.start) + "</span>" +
         '<span class="mm"><b>' + s.title + "</b>" +
-        '<span class="mv">' + s.venue + " · " + s.runtime + "분 · ~" + hhmm(endOf(s)) +
+        /* 상영시간이 추정값이라 종료 시각도 가짜입니다. 둘 다 뺍니다. */
+        '<span class="mv">' + s.venue +
         " · 우선순위 " + s.priority + "</span></span>" +
         '<span class="mk">' + (on ? "담김" : "담기") + "</span></button>";
     }).join("") + "</div>";
@@ -17445,7 +17446,9 @@ window.addEventListener("message", function (e) {
         var h = Math.max((endOf(s)-s.start)*PPM, 34);
         return '<div class="scr '+cls+'" data-id="'+s.id+'" role="button" tabindex="0" '+
                'style="top:'+top+'px;height:'+h+'px">'+
-               "<b>"+s.title+"</b><i>"+hhmm(s.start)+"–"+hhmm(endOf(s))+" · "+s.runtime+"분"+
+               /* 영화제 시간표에는 러닝타임이 없어 상영시간이 추정값입니다.
+                  그러면 종료 시각도 가짜가 되므로 둘 다 적지 않습니다. */
+               "<b>"+s.title+"</b><i>"+hhmm(s.start)+
                " · ★"+s.priority+seatTag(s)+"</i></div>";
       }).join("");
       return '<div class="lane">'+hrs+items+"</div>";
