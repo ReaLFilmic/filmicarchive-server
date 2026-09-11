@@ -18109,6 +18109,303 @@ window.addEventListener("message", function (e) {
 </html>
 </script>
 
+<script type="text/html" id="src-board">
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --room:transparent; --panel:#191916; --panel2:#1F1F1B; --edge:#2C2C26;
+    --lamp:#E3B168; --lamp-deep:#B07B32;
+    --paper:#EDEBE0; --mut:#8D8C7C; --dim:#6E6D61;
+    --sans:"Noto Sans KR",system-ui,sans-serif;
+  }
+  html[data-mode="light"]{
+    --panel:#FFFDF4; --panel2:#F2EFE2; --edge:#DDD9C8;
+    --paper:#22221C; --mut:#6E6C60; --dim:#8E8C7E;
+    --lamp:#8A5A20; --lamp-deep:#6E4416;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--room);color:var(--paper);
+    font-family:var(--sans);font-size:14px;line-height:1.7}
+  .wrap{padding:6px 0 30px}
+  h1{font-size:22px;font-weight:700;margin:0 0 16px}
+
+  .bar{display:flex;align-items:center;gap:8px;margin:0 0 14px}
+  .bar .n{font-size:12.5px;color:var(--dim);margin-right:auto}
+  button{font-family:var(--sans);font-size:13px;padding:7px 14px;
+    border-radius:999px;border:1px solid var(--edge);background:none;
+    color:var(--mut);cursor:pointer}
+  button:hover{color:var(--paper)}
+  button.go{background:var(--lamp);border-color:var(--lamp);
+    color:#2A1C08;font-weight:600}
+  button:disabled{opacity:.5;cursor:default}
+
+  /* 목록 */
+  .list{border-top:1px solid var(--edge)}
+  .row{display:flex;gap:12px;align-items:baseline;padding:13px 2px;
+    border-bottom:1px solid var(--edge);cursor:pointer}
+  .row:hover .ti{color:var(--lamp)}
+  .row .ti{font-size:14.5px;font-weight:600;flex:1;min-width:0;
+    word-break:keep-all}
+  .row .who{font-size:12px;color:var(--mut);flex:none}
+  .row .at{font-size:11.5px;color:var(--dim);flex:none}
+  .row .pv{display:block;font-size:12.5px;color:var(--dim);
+    font-weight:400;margin-top:3px}
+  .row.mine .ti::after{content:"내 글";font-size:10.5px;color:var(--lamp);
+    margin-left:6px;font-weight:500}
+  .empty{padding:40px 4px;text-align:center;font-size:13px;color:var(--dim)}
+
+  /* 글 보기 */
+  .post h2{font-size:19px;font-weight:700;margin:0 0 6px;word-break:keep-all}
+  .post .meta{font-size:12px;color:var(--mut);margin:0 0 18px}
+  .post .body{font-size:14px;line-height:1.85;white-space:pre-wrap;
+    word-break:break-word;padding-bottom:18px;border-bottom:1px solid var(--edge)}
+  .post .acts{display:flex;gap:6px;margin-top:14px}
+
+  /* 글쓰기 */
+  .form{display:flex;flex-direction:column;gap:10px}
+  input,textarea{font-family:var(--sans);font-size:14px;padding:11px 13px;
+    border:1px solid var(--edge);border-radius:8px;
+    background:var(--panel);color:var(--paper);width:100%}
+  textarea{min-height:220px;resize:vertical;line-height:1.8}
+  input::placeholder,textarea::placeholder{color:var(--dim)}
+  .cnt{font-size:11.5px;color:var(--dim);text-align:right}
+  .msg{min-height:18px;font-size:12.5px;color:#D98A80}
+  .msg.ok{color:#8FBF9B}
+  .pager{display:flex;gap:6px;justify-content:center;margin-top:18px}
+  .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+  @media (max-width:700px){
+    .row{flex-wrap:wrap;gap:4px 10px}
+    .row .ti{flex-basis:100%}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="view"></div>
+  <p aria-live="polite" class="sr" id="live"></p>
+</div>
+
+<script>
+/* 부모 창에 높이를 알려 iframe 이 내용만큼 늘어나게 합니다. */
+(function(){
+  var KEY = "board";
+  function report(){
+    try{
+      var el = document.querySelector(".wrap");
+      var h = Math.max(el ? el.scrollHeight : 0, 200) + 24;
+      parent.postMessage({ tag:"proto-height", k:KEY, h:h }, "*");
+    }catch(e){}
+  }
+  window.addEventListener("load", report);
+  setInterval(report, 350);
+  window.addEventListener("message", function(e){
+    var d = e.data;
+    if (d && d.tag === "proto-mode")
+      document.documentElement.setAttribute("data-mode", d.mode || "dark");
+  });
+})();
+<\/script>
+
+<script>
+(function(){
+  "use strict";
+  var $ = function(id){ return document.getElementById(id); };
+  function say(m){ var e = $("live"); if (e) e.textContent = m; }
+
+  /* 남이 쓴 글을 그대로 화면에 꽂으면 안 됩니다.
+     제목·본문에 <script> 가 섞여 들어올 수 있습니다. */
+  function esc(t){
+    return String(t == null ? "" : t)
+      .replace(/&/g,"&amp;").replace(/</g,"&lt;")
+      .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  }
+
+  function when(iso){
+    try{
+      var d = new Date(iso), now = new Date();
+      var mm = String(d.getMonth()+1).padStart(2,"0");
+      var dd = String(d.getDate()).padStart(2,"0");
+      var hh = String(d.getHours()).padStart(2,"0");
+      var mi = String(d.getMinutes()).padStart(2,"0");
+      /* 오늘 쓴 글은 시각만, 지난 글은 날짜만 보여 줍니다. */
+      return d.toDateString() === now.toDateString()
+        ? hh + ":" + mi : mm + "/" + dd;
+    }catch(e){ return ""; }
+  }
+
+  var me = null;                  /* 로그인 정보. 없으면 읽기만 */
+  var page = 1;
+
+  function api(path, opt){
+    opt = opt || {};
+    opt.credentials = "same-origin";
+    if (opt.body) opt.headers = { "Content-Type":"application/json" };
+    return fetch(path, opt).then(function(r){
+      return r.json().catch(function(){ return {}; })
+        .then(function(d){ return { ok:r.ok, d:d }; });
+    });
+  }
+
+  /* ── 목록 ── */
+  function showList(){
+    api("/api/posts?page=" + page).then(function(res){
+      if (!res.ok) { $("view").innerHTML =
+        '<p class="empty">목록을 불러오지 못했습니다.</p>'; return; }
+      var d = res.d, items = d.items || [];
+      var pages = Math.max(1, Math.ceil((d.total||0) / (d.size||20)));
+
+      var html =
+        '<div class="bar"><span class="n">' + (d.total||0) + '개의 글</span>' +
+        (me ? '<button class="go" id="new">글쓰기</button>'
+            : '<button id="needlogin">로그인하고 글쓰기</button>') +
+        "</div>";
+
+      if (!items.length) {
+        html += '<p class="empty">아직 글이 없습니다. 첫 글을 남겨보세요.</p>';
+      } else {
+        html += '<div class="list">' + items.map(function(p){
+          return '<div class="row' + (p.mine ? " mine" : "") +
+            '" data-open="' + p.id + '">' +
+            '<span class="ti">' + esc(p.title) +
+              '<span class="pv">' + esc(p.preview) + "</span></span>" +
+            '<span class="who">' + esc(p.who) + "</span>" +
+            '<span class="at">' + when(p.at) + "</span>" +
+          "</div>";
+        }).join("") + "</div>";
+
+        if (pages > 1) {
+          html += '<div class="pager">';
+          for (var i = 1; i <= pages && i <= 12; i++)
+            html += '<button data-page="' + i + '"' +
+              (i === page ? ' class="go"' : "") + ">" + i + "</button>";
+          html += "</div>";
+        }
+      }
+      $("view").innerHTML = html;
+    });
+  }
+
+  /* ── 글 보기 ── */
+  function showPost(pid){
+    api("/api/posts/" + pid).then(function(res){
+      if (!res.ok) { $("view").innerHTML =
+        '<p class="empty">없는 글입니다.</p>'; showTimer(); return; }
+      var p = res.d;
+      $("view").innerHTML =
+        '<div class="bar"><button id="back">목록</button></div>' +
+        '<div class="post"><h2>' + esc(p.title) + "</h2>" +
+        '<p class="meta">' + esc(p.who) + " · " + when(p.at) +
+          (p.edited !== p.at ? " (수정됨)" : "") + "</p>" +
+        '<div class="body">' + esc(p.body) + "</div>" +
+        (p.mine ? '<div class="acts">' +
+            '<button data-edit="' + p.id + '">고치기</button>' +
+            '<button data-del="' + p.id + '">지우기</button></div>' : "") +
+        "</div>";
+      say(p.title + " 글을 열었습니다.");
+    });
+  }
+  function showTimer(){ setTimeout(showList, 900); }
+
+  /* ── 글쓰기 · 고치기 ── */
+  function showForm(pid, title, body){
+    $("view").innerHTML =
+      '<div class="bar"><button id="back">목록</button></div>' +
+      '<div class="form">' +
+      '<input id="ti" maxlength="80" placeholder="제목" value="' +
+        esc(title || "") + '">' +
+      '<textarea id="bo" maxlength="4000" placeholder="내용을 적어주세요">' +
+        esc(body || "") + "</textarea>" +
+      '<div class="cnt" id="cnt">0 / 4000</div>' +
+      '<div class="msg" id="msg"></div>' +
+      '<div class="acts"><button class="go" id="save">' +
+        (pid ? "고치기" : "올리기") + "</button></div></div>";
+
+    var bo = $("bo"), cnt = $("cnt");
+    function tick(){ cnt.textContent = bo.value.length + " / 4000"; }
+    bo.addEventListener("input", tick); tick();
+    $("ti").focus();
+
+    $("save").addEventListener("click", function(){
+      var t = $("ti").value.trim(), b = bo.value.trim();
+      var msg = $("msg");
+      if (!t) { msg.textContent = "제목을 적어주세요"; return; }
+      if (!b) { msg.textContent = "내용을 적어주세요"; return; }
+      $("save").disabled = true;
+      msg.className = "msg"; msg.textContent = "올리는 중…";
+
+      api(pid ? "/api/posts/" + pid : "/api/posts", {
+        method: pid ? "PUT" : "POST",
+        body: JSON.stringify({ title:t, body:b })
+      }).then(function(res){
+        if (!res.ok) {
+          $("save").disabled = false;
+          msg.textContent = res.d.error || "올리지 못했습니다";
+          return;
+        }
+        msg.className = "msg ok"; msg.textContent = "올렸습니다";
+        say("글을 올렸습니다.");
+        page = 1;
+        setTimeout(showList, 400);
+      });
+    });
+  }
+
+  /* 누르는 처리를 한 곳에 모읍니다. 화면이 계속 다시 그려지므로
+     버튼마다 걸면 아직 안 걸린 버튼을 누르는 순간이 생깁니다. */
+  $("view").addEventListener("click", function(e){
+    var t = e.target;
+    var open = t.closest && t.closest("[data-open]");
+    if (open) { showPost(parseInt(open.dataset.open,10)); return; }
+
+    var pg = t.closest && t.closest("[data-page]");
+    if (pg) { page = parseInt(pg.dataset.page,10); showList(); return; }
+
+    var ed = t.closest && t.closest("[data-edit]");
+    if (ed) {
+      var pid = parseInt(ed.dataset.edit,10);
+      api("/api/posts/" + pid).then(function(res){
+        if (res.ok) showForm(pid, res.d.title, res.d.body);
+      });
+      return;
+    }
+
+    var del = t.closest && t.closest("[data-del]");
+    if (del) {
+      /* 두 번 눌러야 지워집니다. 되돌릴 수 없는 동작이라
+         한 번에 실행하면 실수로 지우는 일이 생깁니다. */
+      if (del.dataset.armed !== "1") {
+        del.dataset.armed = "1";
+        del.textContent = "정말 지울까요?";
+        setTimeout(function(){
+          if (del.dataset.armed === "1") {
+            del.dataset.armed = "0"; del.textContent = "지우기";
+          }
+        }, 3000);
+        return;
+      }
+      api("/api/posts/" + del.dataset.del, { method:"DELETE" })
+        .then(function(){ say("글을 지웠습니다."); page = 1; showList(); });
+      return;
+    }
+
+    if (t.id === "back") { showList(); return; }
+    if (t.id === "new") { showForm(null); return; }
+    if (t.id === "needlogin") { parent.location.href = "/login"; return; }
+  });
+
+  /* 로그인 상태를 먼저 확인하고 목록을 그립니다. */
+  fetch("/me", { credentials:"same-origin" })
+    .then(function(r){ return r.ok ? r.json() : { logged_in:false }; })
+    .catch(function(){ return { logged_in:false }; })
+    .then(function(d){ me = d.logged_in ? d : null; showList(); });
+})();
+<\/script>
+</body></html>
+</script>
+
+
 <!-- 부모 창도 작품 목록이 필요합니다. TMDB 호출부가 FILMS 와 film() 을 씁니다. -->
 <script>
 /* ────────────────────────────────────────────────────────────────
@@ -20018,7 +20315,7 @@ function film(id) { return FILM_BY_ID[id]; }
   var BUILD = "0906-1004";
   (function(){ var e=document.getElementById("buildStamp"); if(e) e.textContent = "build " + BUILD; })();
 
-  var KEYS = ["rate", "mypage", "shelf", "record", "collage", "taste", "collection", "calendar", "biff", "schedule", "cinema", "quiz", "shop"];
+  var KEYS = ["rate", "mypage", "shelf", "record", "collage", "taste", "collection", "calendar", "biff", "schedule", "cinema", "quiz", "shop", "board"];
   var frame = document.getElementById("frame");
   var made = {}, current = KEYS[0];
 
@@ -20236,7 +20533,9 @@ function film(id) { return FILM_BY_ID[id]; }
     { id: "show", label: "상영",
       secs: ["cinema", "calendar", "biff"] },
     { id: "coll", label: "컬렉션",
-      secs: ["collection", "quiz", "shop"] }
+      secs: ["collection", "quiz", "shop"] },
+    { id: "board", label: "자유게시판",
+      secs: ["board"] }
   ];
 
   var SEC = {
@@ -20250,7 +20549,8 @@ function film(id) { return FILM_BY_ID[id]; }
     biff:       { name: "부산국제영화제" },
     collection: { name: "선정 목록" },
     quiz:       { name: "영화 퀴즈" },
-    shop:       { name: "영화 게임" }
+    shop:       { name: "영화 게임" },
+    board:      { name: "자유게시판" }
   };
 ;
 ;
@@ -20394,6 +20694,10 @@ function film(id) { return FILM_BY_ID[id]; }
     if (!made[want]) build(want);
     renderSubBar(k);
     closeDrawers();
+
+    /* 자유게시판은 영화와 무관하므로 서랍(영화 추가·가져오기)을 숨깁니다. */
+    var pn = document.querySelector(".panels");
+    if (pn) pn.hidden = (k === "board");
 
     /* 사용자가 직접 누른 경우에만 기록에 쌓습니다.
        뒤로 가기로 온 경우(muteHash)에 pushState 를 부르면

@@ -4,7 +4,6 @@ import os
 from flask import Flask, jsonify, session, redirect, url_for, request
 from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
-from werkzeug.middleware.proxy_fix import ProxyFix
 
 import db
 from cinema import bp as cinema_bp
@@ -13,7 +12,6 @@ load_dotenv()
 
 # static_url_path="" — static 폴더의 파일을 주소 맨 위에서 바로 내보냅니다
 app = Flask(__name__, static_folder="static", static_url_path="")
-app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 app.json.ensure_ascii = False
 
 # 쿠키에 서명하는 데 쓰는 열쇠. 이게 없으면 session 을 쓸 수 없습니다.
@@ -64,7 +62,7 @@ def callback():
         conn.commit()
 
     session["user_id"] = uid          # 번호표 발급
-    return redirect("/")
+    return redirect("/me")
 
 
 @app.route("/me")
@@ -269,6 +267,154 @@ def public_comments():
         }
         for r in rows
     ])
+
+
+
+# ══════════ 자유게시판 ══════════
+# 글쓰기는 로그인 + 닉네임이 있어야 하고, 읽기는 누구나 됩니다.
+
+TITLE_MAX = 80
+BODY_MAX = 4000
+
+
+def _need_nick(uid):
+    """닉네임이 없으면 글을 쓸 수 없습니다.
+       게시판에 이름 없는 글이 섞이면 누가 썼는지 알 수 없습니다."""
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT nickname FROM users WHERE id = %s", (uid,))
+            r = cur.fetchone()
+    return (r and r[0]) or None
+
+
+@app.route("/api/posts", methods=["GET"])
+def list_posts():
+    """목록. 본문은 미리보기만 잘라 보냅니다."""
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except ValueError:
+        page = 1
+    size = 20
+    me = session.get("user_id")
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) FROM posts WHERE deleted_at IS NULL")
+            total = cur.fetchone()[0]
+
+            cur.execute(
+                "SELECT p.id, u.nickname, p.title, "
+                "       left(p.body, 120), p.created_at, "
+                "       (p.user_id = %s) AS mine "
+                "FROM posts p JOIN users u ON u.id = p.user_id "
+                "WHERE p.deleted_at IS NULL "
+                "ORDER BY p.created_at DESC LIMIT %s OFFSET %s",
+                (me, size, (page - 1) * size))
+            rows = cur.fetchall()
+
+    return jsonify({
+        "total": total, "page": page, "size": size,
+        "items": [{
+            "id": r[0], "who": r[1], "title": r[2],
+            "preview": r[3], "at": r[4].isoformat(), "mine": bool(r[5]),
+        } for r in rows],
+    })
+
+
+@app.route("/api/posts/<int:pid>", methods=["GET"])
+def read_post(pid):
+    me = session.get("user_id")
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT p.id, u.nickname, p.title, p.body, p.created_at, "
+                "       p.updated_at, (p.user_id = %s) AS mine "
+                "FROM posts p JOIN users u ON u.id = p.user_id "
+                "WHERE p.id = %s AND p.deleted_at IS NULL",
+                (me, pid))
+            r = cur.fetchone()
+    if not r:
+        return jsonify({"error": "없는 글입니다"}), 404
+    return jsonify({"id": r[0], "who": r[1], "title": r[2], "body": r[3],
+                    "at": r[4].isoformat(), "edited": r[5].isoformat(),
+                    "mine": bool(r[6])})
+
+
+def _read_post_body():
+    """제목·본문을 검사해 돌려줍니다. 문제가 있으면 (None, 오류응답)."""
+    b = request.get_json(silent=True) or {}
+    title = str(b.get("title", "")).strip()
+    body = str(b.get("body", "")).strip()
+    if not title:
+        return None, (jsonify({"error": "제목을 적어주세요"}), 400)
+    if not body:
+        return None, (jsonify({"error": "내용을 적어주세요"}), 400)
+    return (title[:TITLE_MAX], body[:BODY_MAX]), None
+
+
+@app.route("/api/posts", methods=["POST"])
+@login_required
+def write_post(uid):
+    # 값 검사를 먼저 합니다. DB 에 다녀오기 전에 걸러내면
+    # 잘못된 요청 때문에 DB 를 건드리는 일이 없습니다.
+    got, err = _read_post_body()
+    if err:
+        return err
+    title, body = got
+
+    if not _need_nick(uid):
+        return jsonify({"error": "닉네임을 먼저 정해주세요"}), 400
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO posts (user_id, title, body) "
+                "VALUES (%s, %s, %s) RETURNING id",
+                (uid, title, body))
+            pid = cur.fetchone()[0]
+        conn.commit()
+    return jsonify({"ok": True, "id": pid})
+
+
+@app.route("/api/posts/<int:pid>", methods=["PUT"])
+@login_required
+def edit_post(uid, pid):
+    got, err = _read_post_body()
+    if err:
+        return err
+    title, body = got
+
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            # user_id 조건이 반드시 있어야 합니다. 없으면 남의 글도 고쳐집니다.
+            cur.execute(
+                "UPDATE posts SET title = %s, body = %s, updated_at = now() "
+                "WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
+                (title, body, pid, uid))
+            n = cur.rowcount
+        conn.commit()
+    if not n:
+        return jsonify({"error": "내 글이 아니거나 없는 글입니다"}), 403
+    return jsonify({"ok": True})
+
+
+@app.route("/api/posts/<int:pid>", methods=["DELETE"])
+@login_required
+def remove_post(uid, pid):
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            # 실제로 지우지 않고 표시만 합니다. 되살릴 수 있고,
+            # 실수로 남의 글을 지우는 사고에도 대비가 됩니다.
+            cur.execute(
+                "UPDATE posts SET deleted_at = now() "
+                "WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
+                (pid, uid))
+            n = cur.rowcount
+        conn.commit()
+    if not n:
+        return jsonify({"error": "내 글이 아니거나 없는 글입니다"}), 403
+    return jsonify({"ok": True})
 
 
 @app.route("/logout")
