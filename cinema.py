@@ -259,17 +259,23 @@ def _fetch_lotte(t, day):
     return rows
 
 
-def _megabox_raw(brch, day):
+def _megabox_raw(brch, day, alt=False):
     """메가박스는 schedulePage.do 에 POST 로 지점 번호를 보냅니다.
        브라우저가 보내는 본문에는 날짜가 없어, 응답이 여러 날을 함께 주는지
        그날치만 주는지 확인이 필요합니다. 날짜 칸 이름 후보를 함께 넣어
        받아들이는 쪽이면 걸러지고, 무시하면 그냥 무시됩니다."""
+    ymd = day.replace("-", "")
     payload = {
         "masterType": "brch", "brchNo": brch, "brchNo1": brch,
-        "firstAt": "Y",
-        # 날짜 칸 이름 후보. 서버가 모르는 값은 대개 무시합니다.
-        "playDe": day.replace("-", ""), "playDate": day.replace("-", ""),
+        # firstAt 이 "Y" 면 "첫 화면" 으로 보고 날짜를 무시합니다.
+        # 날짜를 지정할 때는 "N" 이어야 합니다.
+        "firstAt": "N",
+        "playDe": ymd, "playDate": ymd, "playYmd": ymd, "scnYmd": ymd,
     }
+    if alt:
+        # 두 번째 시도 — 브라우저가 날짜를 바꿀 때 쓰는 형태로 보입니다.
+        payload = {"brchNo": brch, "playDe": ymd, "masterType": "brch"}
+
     r = requests.post(MB_URL, json=payload, headers={
         "User-Agent": UA, "Referer": MB_REF,
         "Content-Type": "application/json",
@@ -334,6 +340,16 @@ def _mb_pick(node, out):
 
 def _fetch_megabox(t, day):
     body = _megabox_raw(t["brch"], day)
+
+    # 메가박스가 요청한 날짜를 무시하고 다른 날을 돌려주는 경우가 있습니다.
+    # 응답 안의 playDe 를 보고, 어긋나면 한 번 더 다르게 요청합니다.
+    want = day.replace("-", "")
+    try:
+        got = str(((json.loads(body) or {}).get("megaMap") or {}).get("playDe") or "")
+    except Exception:
+        got = ""
+    if got and got != want:
+        body = _megabox_raw(t["brch"], day, alt=True)
     try:
         data = json.loads(body)
     except Exception:
@@ -553,6 +569,27 @@ def diag():
     except Exception as e:
         mt = {"error": "%s: %s" % (type(e).__name__, str(e)[:200])}
     out["mtgi"] = mt
+
+    # ── 부기 (bookcosmos) 살펴보기 ──
+    try:
+        r = requests.get(
+            "https://bookticket.bookcosmos.com/sub/ticketing/ticketing_01.asp",
+            headers={"User-Agent": UA,
+                     "Referer": "https://bookticket.bookcosmos.com/",
+                     "Accept-Language": "ko-KR,ko;q=0.9"}, timeout=TIMEOUT)
+        r.encoding = r.apparent_encoding or "euc-kr"
+        body = r.text
+        bk = {"status": r.status_code, "len": len(body)}
+        bk["times"] = sorted(set(re.findall(r"\b(?:[01]?\d|2[0-3]):[0-5]\d\b", body)))[:12]
+        bk["dates"] = sorted(set(re.findall(r"20\d{2}[-.]?\d{2}[-.]?\d{2}", body)))[:6]
+        bk["forms"] = re.findall(r'action="([^"]+)"', body)[:5]
+        bk["classes"] = sorted(set(re.findall(r'class="([a-zA-Z0-9_ -]{3,28})"', body)))[:20]
+        txt = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", body)
+        txt = re.sub(r"<[^>]+>", " ", txt)
+        bk["text"] = re.sub(r"\s+", " ", txt).strip()[:300]
+    except Exception as e:
+        bk = {"error": "%s: %s" % (type(e).__name__, str(e)[:160])}
+    out["bookcosmos"] = bk
 
     return jsonify(out)
 
