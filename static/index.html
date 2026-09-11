@@ -17328,9 +17328,20 @@ window.addEventListener("message", function (e) {
      옵니다. 그 경우만 앞 한 단어로 묶고, 나머지는 이름 그대로 씁니다. */
   var house = null;
 
+  /* venue 가 "CGV 센텀시티 3관" 처럼 극장 + 상영관으로 옵니다.
+     극장 이름만 떼어 탭으로 묶습니다. 예전에는 영화의전당만 처리해
+     CGV·롯데는 상영관마다 따로 탭이 생겼습니다. */
+  var HOUSES = ["영화의전당", "CGV 센텀시티", "롯데시네마 센텀시티",
+                "영화진흥위원회 표준시사실", "신세계백화점 센텀",
+                "소향씨어터", "시청자미디어센터",
+                "동서대-경남정보대 센텀캠퍼스"];
+
   function houseOf(venue){
     var v = String(venue || "").trim();
-    return v.indexOf("영화의전당") === 0 ? "영화의전당" : v;
+    for (var i = 0; i < HOUSES.length; i++) {
+      if (v.indexOf(HOUSES[i]) === 0) return HOUSES[i];
+    }
+    return v;
   }
 
   /* 탭 순서를 여기서 정합니다. 데이터가 오는 순서를 쓰면

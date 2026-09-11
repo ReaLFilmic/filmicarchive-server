@@ -41,23 +41,39 @@ VERSION = "biff-1"
 # s_code 가 있으면 그 상영관만, 없으면 기본 상영관이 나옵니다.
 # 영화의전당은 상영관이 다섯이라 따로 받아야 전부 모입니다.
 THEATERS = [
-    {"code": "BT", "idx": "110", "sc": "BT", "name": "영화의전당",
-     "hall": "루프씨어터"},
-    {"code": "BT", "idx": "110", "sc": "BH", "name": "영화의전당",
-     "hall": "하늘연극장"},
-    {"code": "BT", "idx": "110", "sc": "B1", "name": "영화의전당",
-     "hall": "중극장"},
-    {"code": "BT", "idx": "110", "sc": "B2", "name": "영화의전당",
-     "hall": "소극장"},
-    {"code": "BT", "idx": "110", "sc": "B3", "name": "영화의전당",
-     "hall": "시네마테크"},
-    {"code": "C1",  "idx": "111", "name": "CGV 센텀시티"},
-    {"code": "L2",  "idx": "112", "name": "롯데시네마 센텀시티"},
-    {"code": "KT",  "idx": "113", "name": "영화진흥위원회 표준시사실"},
-    {"code": "SC",  "idx": "115", "name": "신세계백화점 센텀"},
-    {"code": "SH",  "idx": "116", "name": "소향씨어터"},
-    {"code": "BCM", "idx": "117", "name": "시청자미디어센터"},
-    {"code": "DM",  "idx": "118", "name": "동서대-경남정보대 센텀캠퍼스"},
+    # 영화의전당 5
+    {"code":"BT","idx":"110","sc":"BT","name":"영화의전당","hall":"루프씨어터"},
+    {"code":"BT","idx":"110","sc":"BH","name":"영화의전당","hall":"하늘연극장"},
+    {"code":"BT","idx":"110","sc":"B1","name":"영화의전당","hall":"중극장"},
+    {"code":"BT","idx":"110","sc":"B2","name":"영화의전당","hall":"소극장"},
+    {"code":"BT","idx":"110","sc":"B3","name":"영화의전당","hall":"시네마테크"},
+
+    # CGV 센텀시티 8
+    {"code":"C1","idx":"111","sc":"CX","name":"CGV 센텀시티","hall":"IMAX관"},
+    {"code":"C1","idx":"111","sc":"C1","name":"CGV 센텀시티","hall":"1관"},
+    {"code":"C1","idx":"111","sc":"C2","name":"CGV 센텀시티","hall":"2관"},
+    {"code":"C1","idx":"111","sc":"C3","name":"CGV 센텀시티","hall":"3관"},
+    {"code":"C1","idx":"111","sc":"C4","name":"CGV 센텀시티","hall":"4관"},
+    {"code":"C1","idx":"111","sc":"C5","name":"CGV 센텀시티","hall":"5관"},
+    {"code":"C1","idx":"111","sc":"C6","name":"CGV 센텀시티","hall":"6관"},
+    {"code":"C1","idx":"111","sc":"C7","name":"CGV 센텀시티","hall":"7관"},
+
+    # 롯데시네마 센텀시티 8 (8관은 영화제에 안 쓰입니다)
+    {"code":"L2","idx":"112","sc":"L2","name":"롯데시네마 센텀시티","hall":"2관"},
+    {"code":"L2","idx":"112","sc":"L3","name":"롯데시네마 센텀시티","hall":"3관"},
+    {"code":"L2","idx":"112","sc":"L4","name":"롯데시네마 센텀시티","hall":"4관"},
+    {"code":"L2","idx":"112","sc":"L5","name":"롯데시네마 센텀시티","hall":"5관"},
+    {"code":"L2","idx":"112","sc":"L6","name":"롯데시네마 센텀시티","hall":"6관"},
+    {"code":"L2","idx":"112","sc":"L7","name":"롯데시네마 센텀시티","hall":"7관"},
+    {"code":"L2","idx":"112","sc":"L9","name":"롯데시네마 센텀시티","hall":"9관"},
+    {"code":"L2","idx":"112","sc":"L10","name":"롯데시네마 센텀시티","hall":"10관"},
+
+    # 상영관이 하나뿐인 곳
+    {"code":"KT","idx":"113","sc":"KT","name":"영화진흥위원회 표준시사실"},
+    {"code":"SC","idx":"115","sc":"SC","name":"신세계백화점 센텀"},
+    {"code":"SH","idx":"116","sc":"SH","name":"소향씨어터"},
+    {"code":"BCM","idx":"117","sc":"BCM","name":"시청자미디어센터"},
+    {"code":"DM","idx":"118","sc":"DB","name":"동서대-경남정보대 센텀캠퍼스"},
 ]
 
 # 한 덩어리 = 날짜 하나 + 그 아래 회차들
@@ -160,7 +176,7 @@ def biff():
                                   % (t["name"], type(e).__name__, str(e)[:120]))
             _time.sleep(0.2)
 
-    ths = [threading.Thread(target=worker) for _ in range(4)]
+    ths = [threading.Thread(target=worker) for _ in range(6)]
     for th in ths:
         th.start()
     for th in ths:
