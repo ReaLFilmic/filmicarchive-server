@@ -31,6 +31,10 @@ from flask import Blueprint, Response, jsonify, request
 
 bp = Blueprint("cinema", __name__)
 
+# 배포된 것이 최신인지 눈으로 확인하려고 둡니다.
+# /api/cinema/diag 의 version 과 아래 값이 같아야 합니다.
+VERSION = "2026-09-11c"
+
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 MAX_DAYS = 21
@@ -529,7 +533,7 @@ def _get(t, day):
 def diag():
     """CGV 가 막힐 때 원인을 가리기 위한 진단.
        서버의 바깥 IP 와, CGV 가 실제로 돌려주는 것을 그대로 보여 줍니다."""
-    out = {}
+    out = {"version": VERSION}
 
     # 이 서버가 인터넷에 어떤 IP 로 보이는지
     try:

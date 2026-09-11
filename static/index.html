@@ -15885,6 +15885,11 @@ window.addEventListener("message", function (e) {
   /* venue 는 "메가박스 서면대한 리클라이너 4관" 처럼 극장 + 지점 + 상영관 입니다.
      극장 이름을 앞에서 떼어 내 탭으로 묶습니다. 목록에 없는 극장이면
      첫 두 단어를 쓰는데, 그래야 새 극장을 넣어도 대충 맞습니다. */
+  /* 배포된 화면이 최신인지 확인용. F12 콘솔에서
+       document.querySelector("iframe[data-k=cinema]").contentWindow.CINEMA_UI
+     로 볼 수 있습니다. */
+  window.CINEMA_UI = "2026-09-11c";
+
   var HOUSES = ["영화의전당", "CGV", "롯데시네마", "메가박스", "모퉁이극장"];
 
   function houseOf(venue){
