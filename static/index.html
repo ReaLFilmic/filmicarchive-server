@@ -15888,7 +15888,7 @@ window.addEventListener("message", function (e) {
   /* 배포된 화면이 최신인지 확인용. F12 콘솔에서
        document.querySelector("iframe[data-k=cinema]").contentWindow.CINEMA_UI
      로 볼 수 있습니다. */
-  window.CINEMA_UI = "2026-09-11c";
+  window.CINEMA_UI = "2026-09-11d";
 
   var HOUSES = ["영화의전당", "CGV", "롯데시네마", "메가박스", "모퉁이극장"];
 
@@ -15906,12 +15906,27 @@ window.addEventListener("message", function (e) {
     return v.split(" ").slice(0, 2).join(" ");
   }
 
+  /* 탭 순서를 여기서 정합니다. 데이터가 오는 순서를 그대로 쓰면
+     그날 어느 극장 회차가 먼저 오느냐에 따라 날마다 바뀝니다.
+     목록에 없는 극장은 뒤에 이름순으로 붙습니다. */
+  var HOUSE_ORDER = [
+    "영화의전당",
+    "롯데시네마 부산본점",
+    "롯데시네마 광복",
+    "메가박스 서면대한"
+  ];
+
   function houseList(){
-    var seen = {}, out = [];
+    var seen = {};
     S.filter(function(s){ return s.date === day; }).forEach(function(s){
-      var h = houseOf(s.venue);
-      if (!seen[h]) { seen[h] = 1; out.push(h); }
+      seen[houseOf(s.venue)] = 1;
     });
+
+    var out = [];
+    HOUSE_ORDER.forEach(function(h){
+      if (seen[h]) { out.push(h); delete seen[h]; }
+    });
+    Object.keys(seen).sort().forEach(function(h){ out.push(h); });
     return out;
   }
 
