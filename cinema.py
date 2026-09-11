@@ -33,7 +33,7 @@ bp = Blueprint("cinema", __name__)
 
 # 배포된 것이 최신인지 눈으로 확인하려고 둡니다.
 # /api/cinema/diag 의 version 과 아래 값이 같아야 합니다.
-VERSION = "2026-09-11c"
+VERSION = "2026-09-11d"
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
@@ -301,13 +301,28 @@ MB_TIME = re.compile(r"^\d{1,2}:\d{2}$")
 
 
 def _mb_key(d, *pats):
-    """칸 이름을 정확히 맞히지 않고 패턴으로 찾습니다.
-       메가박스는 playStartTime · playStrtTm 처럼 판마다 이름이 조금씩
-       달라, 이름을 나열하는 방식으로는 계속 어긋납니다."""
-    for k in d:
-        low = k.lower()
-        for need in pats:
-            if all(w in low for w in need):
+    """칸 이름을 패턴으로 찾습니다. 메가박스는 playStartTime · playStrtTm 처럼
+       판마다 이름이 조금씩 달라 이름 나열로는 계속 어긋납니다.
+
+       다만 부분 일치만 쓰면 엉뚱한 칸이 걸립니다. 실제로
+       playKindEngNm 이 ("play","de") 에 맞아("...d-e-ngnm") 날짜 자리로
+       잡혔고, 값이 "부산/대구/경상" 이라 그날 회차가 전부 탈락했습니다.
+
+       그래서 패턴을 이어붙인 이름과 정확히 같은 칸을 먼저 찾고,
+       없을 때만 부분 일치로 넘어갑니다. """
+    low = {k.lower(): k for k in d}
+
+    # ① 정확히 일치 — playde, playstarttime …
+    for need in pats:
+        want = "".join(need)
+        if want in low:
+            return d[low[want]]
+
+    # ② 패턴 순서대로 부분 일치. 짧은 칸 이름을 먼저 봅니다.
+    #    긴 이름일수록 우연히 겹칠 여지가 큽니다.
+    for need in pats:
+        for k in sorted(d, key=len):
+            if all(w in k.lower() for w in need):
                 return d[k]
     return None
 
@@ -394,8 +409,10 @@ def _fetch_megabox(t, day):
         title = str(_mb_title(it) or "").strip()
         if not title:
             continue
-        hall = str(_mb_key(it, ("theab", "nm"), ("theab", "name"),
-                               ("screen", "nm"), ("theat", "nm")) or "").strip()
+        # theabExpoNm 이 "리클라이너 4관" 처럼 화면에 쓰는 이름입니다.
+        # ("theab","nm") 을 먼저 두면 theabNo("04") 가 걸립니다.
+        hall = str(_mb_key(it, ("theab", "expo"), ("theab", "exponm"),
+                               ("screen", "nm"), ("theab", "nm")) or "").strip()
         venue = (t["name"] + " " + hall) if hall else t["name"]
 
         key = (title, venue, start)
