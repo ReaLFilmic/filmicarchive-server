@@ -16246,6 +16246,36 @@ window.addEventListener("message", function (e) {
   .empty{padding:26px 4px;font-size:13px;color:var(--dim)}
   .loadnote{padding:48px 4px;text-align:center;font-size:13.5px;
     color:var(--dim);line-height:1.9}
+
+  /* 작품 정보 — 상영작 화면과 같은 모양으로 맞췄습니다. */
+  .detail:empty{display:none}
+  .detail .info{display:flex;gap:16px;padding:16px;margin:0 0 14px;
+    background:var(--panel);border:1px solid var(--edge);border-radius:10px}
+  .detail .info .p{width:104px;flex:none;border-radius:6px;display:block}
+  .detail .info .txt{flex:1;min-width:0}
+  .detail .info h3{margin:0 0 5px;font-size:16px;font-weight:700}
+  .detail .info .meta{margin:0 0 8px;font-size:12px;color:var(--dim);
+    line-height:1.7;word-break:keep-all}
+  .detail .info .ov{margin:0 0 10px;font-size:12.5px;line-height:1.75;
+    color:var(--mut)}
+  .detail .info table{border-collapse:collapse;font-size:12px;margin:0 0 8px}
+  .detail .info th{text-align:left;color:var(--dim);font-weight:500;
+    padding:1px 14px 1px 0;white-space:nowrap}
+  .detail .info td{padding:1px 0;color:var(--mut)}
+  .detail .info .sts{display:flex;gap:5px;margin:0 0 10px;flex-wrap:wrap}
+  .detail .info .sts i{width:92px;height:52px;border-radius:4px;
+    background-size:cover;background-position:center;display:block}
+  .detail .info .acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .detail .info .acts a{font-size:12.5px;color:var(--lamp);text-decoration:none}
+  .detail .info .acts a:hover{text-decoration:underline}
+  .detail .info .load{font-size:12.5px;color:var(--dim)}
+  .detail .cls{margin-left:auto;font-size:12px;background:none;border:0;
+    color:var(--dim);cursor:pointer;padding:2px 4px}
+  .detail .cls:hover{color:var(--paper)}
+  @media (max-width:700px){
+    .detail .info{flex-direction:column}
+    .detail .info .p{width:84px}
+  }
   .lanes{flex:1;display:flex;position:relative}
   .lane{flex:1;min-width:92px;position:relative;border-left:1px solid #241F17}
   .hr{position:absolute;left:0;right:0;border-top:1px solid #201B14}
@@ -16717,6 +16747,7 @@ window.addEventListener("message", function (e) {
     <div>
       <div class="tabs" id="tabs"></div>
   <div class="houses" id="houses"></div>
+  <div class="detail" id="detail"></div>
       <div class="board" id="board"></div>
   <div class="boardout">
     <button class="tinyb" id="dlday">이 날 시간표 PNG로 저장</button>
@@ -17393,6 +17424,74 @@ window.addEventListener("message", function (e) {
       });
     });
   }
+
+  /* ── 작품 정보 ──
+     영화제 시간표에는 제목과 시각뿐이라, 어떤 영화인지 알기 어렵습니다.
+     상영작 화면과 같은 방식으로 TMDB 에서 찾아 보여 줍니다. */
+  function showInfo(title){
+    var host = $("detail");
+    if (!host) return;
+    host.innerHTML = '<div class="info"><span class="load">' + title +
+      ' 정보를 불러오는 중…</span><button class="cls">닫기</button></div>';
+    var box = host.querySelector(".info");
+
+    if (!APP.canSearch()) {
+      box.innerHTML = '<span class="load">위쪽 <b>TMDB 연결</b>에서 키를 넣으면 ' +
+        '정보가 나옵니다.</span><button class="cls">닫기</button>';
+      return;
+    }
+
+    APP.searchMovies(title).then(function(hits){
+      if (!hits || !hits.length) throw new Error("TMDB 에 없는 작품입니다");
+      return APP.preview(hits[0].id);
+    }).then(function(d){
+      box.innerHTML =
+        (d.poster ? '<img class="p" src="' + d.poster + '" alt="">' : "") +
+        '<div class="txt"><h3>' + d.ko + "</h3>" +
+        '<p class="meta">' + [d.en, d.year, d.runtime && (d.runtime + "분"),
+          d.genres, d.imdb && ("TMDB \u2605 " + d.imdb)]
+          .filter(Boolean).join(" · ") + "</p>" +
+        (d.overview ? '<p class="ov">' + d.overview.slice(0, 220) +
+           (d.overview.length > 220 ? "\u2026" : "") + "</p>" : "") +
+        ((d.crew || []).length ? "<table>" + d.crew.map(function(c){
+            return "<tr><th>" + c[0] + "</th><td>" + c[1] + "</td></tr>";
+          }).join("") + "</table>" : "") +
+        ((d.cast || []).length ? '<p class="meta">출연 · ' +
+            d.cast.map(function(c){ return c[0]; }).join(", ") + "</p>" : "") +
+        ((d.stills || []).length ? '<div class="sts">' +
+            d.stills.slice(0, 3).map(function(u){
+              return '<i style="background-image:url(' + u + ')"></i>';
+            }).join("") + "</div>" : "") +
+        '<div class="acts">' +
+        (d.trailer ? '<a href="https://www.youtube.com/watch?v=' + d.trailer +
+           '" target="_blank" rel="noopener">예고편 보기</a>' : "") +
+        "</div></div>" +
+        '<button class="cls">닫기</button>';
+    }).catch(function(e){
+      box.innerHTML = '<span class="load">' +
+        (e && e.message ? e.message : "정보를 찾지 못했습니다") +
+        '</span><button class="cls">닫기</button>';
+    });
+  }
+
+  /* 표는 계속 다시 그려지므로 위임으로 한 번만 걸어 둡니다.
+     회차를 누르는 것(담기)과 제목을 누르는 것(정보)을 갈라야 합니다. */
+  (function bindInfo(){
+    var d = $("detail");
+    if (d) d.addEventListener("click", function(e){
+      if (e.target.closest && e.target.closest(".cls")) d.innerHTML = "";
+    });
+
+    var bd = $("board");
+    if (!bd) return;
+    bd.addEventListener("click", function(e){
+      var b = e.target.closest && e.target.closest(".scr b");
+      if (!b) return;
+      e.preventDefault();
+      e.stopPropagation();          /* 담기까지 같이 일어나지 않게 */
+      showInfo(b.textContent.trim());
+    }, true);
+  })();
 
   function renderBoard(){
     if (narrow()) return renderList();
@@ -20777,7 +20876,7 @@ function film(id) { return FILM_BY_ID[id]; }
      각 화면이 별도 문서라 한 문서에 합치면 CSS 와 코드가 부딪힙니다.
      그래서 탭 안에서 어느 화면을 보일지만 고릅니다. */
   var BIFF_SUB = ["biff", "schedule"];
-  var BIFF_LABEL = { biff: "상영작", schedule: "시간표 짜기" };
+  var BIFF_LABEL = { biff: "상영작", schedule: "시간표 생성기" };
   var biffSub = "biff";
 
   function renderSubBar(k) {
