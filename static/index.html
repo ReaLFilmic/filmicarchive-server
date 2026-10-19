@@ -19011,9 +19011,23 @@ function film(id) { return FILM_BY_ID[id]; }
         return self.flush().then(function () { return Store.del("records"); });
       });
     },
-    subscribe: function (name, fn) { subs.push({ name: name, fn: fn }); },
+    /* 화면(iframe)은 서재가 바뀌면 통째로 새로 만들어집니다(rebuild).
+       그런데 지워진 화면이 걸어 둔 구독은 그대로 남아, 알림이 올 때마다 죽은 화면이 먼저 실행됩니다.
+       특히 기록 화면의 죽은 구독이 APP.pendingRecord 를 먼저 가져가 버려서,
+       새 기록 화면은 열 작품을 모른 채 맨 앞 작품(예: 인터스텔라)만 계속 보여 줬습니다.
+       그래서 구독할 때 "누구의 함수인지" 를 적어 두고, 지워진 화면의 구독은 버립니다. */
+    subscribe: function (name, fn) {
+      var owner = null;
+      try { owner = fn.constructor("return this")(); } catch (e) {}   // 함수가 만들어진 창
+      subs.push({ name: name, fn: fn, owner: owner });
+    },
     notify: function (from) {
-      subs.forEach(function (s) {
+      subs = subs.filter(function (s) {
+        if (!s.owner || s.owner === window) return true;               // 부모 자신의 구독
+        try { return !!(s.owner.frameElement && s.owner.frameElement.isConnected); }
+        catch (e) { return false; }
+      });
+      subs.slice().forEach(function (s) {
         if (s.name === from) return;
         try { s.fn(); } catch (e) {}
       });
