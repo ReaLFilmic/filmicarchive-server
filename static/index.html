@@ -19117,7 +19117,7 @@ function film(id) { return FILM_BY_ID[id]; }
 
   /* ── 모듈이 공유하는 별점 · 이미지 저장소 ── */
   var records = {}, subs = [];
-  var dirty = {}, saveTimer = null;
+  var dirty = {}, saveTimer = null, retryN = 0, syncWarned = false;
   /* 내부 id → TMDB 번호. 서버는 TMDB 번호만 알아듣습니다. */
   var TMDBOF = {};
   window.APP = {
@@ -19144,33 +19144,118 @@ function film(id) { return FILM_BY_ID[id]; }
       saveTimer = setTimeout(function () { self.flush(); }, 400);
     },
 
+    /* 서재에서 내부 id 로 작품을 찾습니다. */
+    findById: function (id) {
+      return APP.library.filter(function (x) { return x.id === id; })[0] || null;
+    },
+
+    /* 내부 id → TMDB 번호. 서버는 TMDB 번호만 알아듣습니다.
+       부팅 때 만든 표(TMDBOF)에만 기대면, 그 뒤에 담은 작품(가져오기·직접 담기)은
+       번호를 못 찾아 서버로 가지 못했습니다. 그래서 서재·불러온 정보·id 모양(t123)에서도 찾습니다. */
+    tmdbIdOf: function (id) {
+      var f = APP.findById(id);
+      var t = (f && f.tmdbId) || TMDBOF[id] || (APP.media[id] && APP.media[id].tmdbId);
+      if (!t) { var m = /^t(\d+)$/.exec(String(id)); if (m) t = +m[1]; }
+      if (t) TMDBOF[id] = t;
+      return t || null;
+    },
+
+    /* 저장이 실패했을 때 조용히 넘어가면 사용자는 모릅니다. 화면에 알립니다. */
+    syncFail: function (why, ids) {
+      ids.forEach(function (id) { dirty[id] = 1; });          // 다음 시도에 다시 보냅니다
+      syncWarned = true;
+      if (why === "auth") {
+        toast("로그인이 풀렸습니다", "서버에 저장되지 않았습니다. 다시 로그인해 주세요.", 0);
+        return;                                               // 로그인 전에는 재시도가 소용없습니다
+      }
+      toast("서버에 저장하지 못했습니다", "잠시 뒤 다시 시도합니다", 0);
+      if (retryN++ < 3) setTimeout(function () { APP.flush(); }, 4000 * retryN);
+    },
+
     flush: function () {
       if (!this.me) {
         /* 로그인 전 — 통째로 이 브라우저에 넣습니다 */
         dirty = {};
-        return Store.set("records", JSON.stringify(records));
+        return Store.set("records", JSON.stringify(records)).then(function () {
+          return { sent: 0, skipped: 0, failed: 0 };
+        });
       }
       /* 로그인 후 — 바뀐 것만 서버로 보냅니다 */
       var ids = Object.keys(dirty);
       dirty = {};
-      return Promise.all(ids.map(function (id) {
-        var f = APP.findById ? APP.findById(id) : null;
-        var tmdbId = (f && f.tmdbId) || TMDBOF[id];
-        if (!tmdbId) return null;                  /* TMDB 번호를 모르면 못 보냅니다 */
+      var rows = [], rowIds = [], skipped = 0, skippedIds = [];
+      ids.forEach(function (id) {
+        var t = APP.tmdbIdOf(id);
+        if (!t) { skipped++; skippedIds.push(id); return; }     // TMDB 번호가 없으면 보낼 수 없습니다
         var r = records[id] || {};
-        return fetch("/api/records", {
-          method: "POST",
+        rows.push({
+          tmdb_id: t,
+          score: r.score || null,
+          comment: r.comment || null,
+          watched_at: r.at || null,
+          status: r.status || null,
+          spoiler: !!r.spoiler
+        });
+        rowIds.push(id);
+      });
+      if (!rows.length) return Promise.resolve({ sent: 0, skipped: skipped, failed: 0 });
+
+      var post = function (url, body) {
+        return fetch(url, {
+          method: "POST", credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            tmdb_id: tmdbId,
-            score: r.score || null,
-            comment: r.comment || null,
-            watched_at: r.at || null,
-            status: r.status || null,
-            spoiler: !!r.spoiler
-          })
-        }).catch(function () {});
-      }).filter(Boolean));
+          body: JSON.stringify(body)
+        });
+      };
+
+      /* 서버가 아직 /bulk 를 모르면(옛 서버) 한 편씩 보냅니다. */
+      function sendEach(from, to) {
+        var bad = 0, i = from;
+        function next() {
+          if (i >= to) return Promise.resolve(bad ? "fail" : "ok");
+          var k = i++;
+          return post("/api/records", rows[k]).then(function (r) {
+            if (r.status === 401) { bad++; return "auth"; }
+            if (!r.ok) bad++;
+          }).catch(function () { bad++; }).then(function (x) {
+            return x === "auth" ? "auth" : next();
+          });
+        }
+        return next();
+      }
+
+      /* 100편씩 끊어 보냅니다. 요청 하나에 DB 연결 하나만 씁니다. */
+      var STEP = 100, jobs = [];
+      for (var i = 0; i < rows.length; i += STEP) (function (from) {
+        var to = Math.min(from + STEP, rows.length);
+        jobs.push(function () {
+          return post("/api/records/bulk", { records: rows.slice(from, to) }).then(function (r) {
+            if (r.status === 401) return "auth";
+            if (r.status === 404 || r.status === 405) return sendEach(from, to);
+            return r.ok ? "ok" : "fail";
+          }).catch(function () { return "fail"; }).then(function (res) {
+            return { res: res, from: from, to: to };
+          });
+        });
+      })(i);
+
+      var outcome = [];
+      return jobs.reduce(function (p, job) {
+        return p.then(function () { return job().then(function (o) { outcome.push(o); }); });
+      }, Promise.resolve()).then(function () {
+        var failed = 0, auth = false, sent = 0;
+        outcome.forEach(function (o) {
+          if (o.res === "ok") { sent += o.to - o.from; return; }
+          failed += o.to - o.from;
+          if (o.res === "auth") auth = true;
+          APP.syncFail(o.res === "auth" ? "auth" : "fail", rowIds.slice(o.from, o.to));
+        });
+        if (!failed) {
+          retryN = 0;
+          if (syncWarned) { syncWarned = false; toast(null); }
+        }
+        return { sent: sent, skipped: skipped, failed: failed };
+      });
     },
 
     /* 로그인 상태를 확인하고, 기록을 알맞은 곳에서 불러옵니다. */
@@ -19181,9 +19266,16 @@ function film(id) { return FILM_BY_ID[id]; }
         .catch(function () { return { logged_in: false }; })
         .then(function (d) {
           self.me = d.logged_in ? d : false;
-          return self.me ? self.pullServer() : self.pullLocal();
+          if (!self.me) return self.pullLocal();
+          return self.pullServer().then(function (ok) {
+            /* 서버에서 못 받았으면 올리지 않습니다. 빈 목록으로 덮어쓸 위험이 있습니다. */
+            return ok ? self.liftLocal() : null;
+          });
         })
-        .then(function () { self.notify(); });
+        .then(function () {
+          self.notify();
+          if (self.me) self.restoreMissing();
+        });
     },
 
     pullLocal: function () {
@@ -19196,16 +19288,22 @@ function film(id) { return FILM_BY_ID[id]; }
       });
     },
 
+    /* 서버에 있는 기록을 받습니다. 성공하면 true. */
+    serverOnly: [],
     pullServer: function () {
       return fetch("/api/records", { credentials: "same-origin" })
-        .then(function (r) { return r.ok ? r.json() : []; })
+        .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
         .then(function (list) {
-          /* 서버는 TMDB 번호로 돌려주므로, 서재의 내부 id 로 되돌립니다 */
+          APP.serverOnly = [];
+          /* 서버는 TMDB 번호로 돌려주므로, 서재의 내부 id 로 되돌립니다.
+             서재에 없는 작품의 id 는 "t" + 번호 — 나중에 담길 때의 id 와 같아서
+             담기는 순간 이 기록이 그대로 붙습니다. */
           (list || []).forEach(function (row) {
             var f = APP.library.filter(function (x) {
               return x.tmdbId === row.tmdb_id;
             })[0];
-            var id = f ? f.id : ("tmdb-" + row.tmdb_id);
+            var id = f ? f.id : ("t" + row.tmdb_id);
+            if (!f) APP.serverOnly.push(row.tmdb_id);
             TMDBOF[id] = row.tmdb_id;
             records[id] = {
               score: row.score || 0,
@@ -19215,12 +19313,56 @@ function film(id) { return FILM_BY_ID[id]; }
               at: row.watched_at || ""
             };
           });
+          return true;
         })
-        .catch(function () {});
+        .catch(function () { return false; });
     },
 
-    /* 로그인 전에 매긴 기록을 서버로 한 번 올립니다.
-       처음 로그인했을 때 화면이 비어 보이지 않게 하는 처리입니다. */
+    /* 서버에는 기록(별점·코멘트)만 있고 작품 목록은 이 브라우저에만 있습니다.
+       다른 주소·기기·브라우저에서 열면 기록은 받았는데 보여 줄 작품이 없어 비어 보입니다.
+       그래서 서버에 기록이 있는데 서재에 없는 작품을 TMDB 에서 다시 담습니다. */
+    restoreMissing: function () {
+      var want = (APP.serverOnly || []).filter(function (t) {
+        return !APP.findByTmdb(t) && !REMOVED["t" + t];
+      });
+      if (!want.length) return Promise.resolve(0);
+
+      var tries = 0;
+      function keyReady() {
+        var k = (($("key") && $("key").value) || "").replace(/\s+/g, "");
+        return k.length >= 20;
+      }
+      return new Promise(function (go) {
+        (function wait() {
+          if (keyReady()) return go(true);
+          if (++tries > 12) return go(false);              // 키가 없으면 포기합니다
+          setTimeout(wait, 1000);
+        })();
+      }).then(function (ok) {
+        if (!ok) return 0;
+        var q = want.slice(), done = 0, got = 0;
+        toast("서버에 저장된 작품을 불러오는 중", "0 / " + want.length + "편", 0);
+        function worker() {
+          var t = q.shift();
+          if (!t) return Promise.resolve();
+          return APP.addByTmdbId(t).then(function () { got++; }, function () {})
+            .then(function () {
+              done++;
+              toast("서버에 저장된 작품을 불러오는 중", done + " / " + want.length + "편",
+                    Math.round(done / want.length * 100));
+              return new Promise(function (g) { setTimeout(g, 130); }).then(worker);
+            });
+        }
+        return Promise.all([worker(), worker(), worker()]).then(function () {
+          toast(null);
+          libSave(); libRefresh(); reloadAll();
+          return got;
+        });
+      });
+    },
+
+    /* 로그인 전에 이 브라우저에 담아 둔 기록 중 서버에 없는 것을 서버로 한 번 올립니다.
+       전부 올라간 경우에만 브라우저 사본을 지웁니다. */
     liftLocal: function () {
       var self = this;
       return Store.get("records").then(function (raw) {
@@ -19228,10 +19370,11 @@ function film(id) { return FILM_BY_ID[id]; }
         var got = {};
         try { got = JSON.parse(raw); } catch (e) { return; }
         Object.keys(got).forEach(function (id) {
-          if (!records[id]) records[id] = got[id];
-          dirty[id] = 1;
+          if (!records[id]) { records[id] = got[id]; dirty[id] = 1; }
         });
-        return self.flush().then(function () { return Store.del("records"); });
+        return self.flush().then(function (res) {
+          if (res && !res.failed && !res.skipped) return Store.del("records");
+        });
       });
     },
     /* 화면(iframe)은 서재가 바뀌면 통째로 새로 만들어집니다(rebuild).
@@ -20574,6 +20717,7 @@ function film(id) { return FILM_BY_ID[id]; }
             if (it.comment) { r.comment = it.comment; r.spoiler = it.spoiler; }
             if (it.at) r.at = it.at;
             if (it.score || it.comment) r.status = "봤어요";
+            APP.persist(f.id);                 // 서버(또는 이 브라우저)에 저장합니다
             ok++;
           });
         })
