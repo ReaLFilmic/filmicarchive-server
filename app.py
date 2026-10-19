@@ -39,6 +39,12 @@ def home():
     return app.send_static_file("index.html")
 
 
+@app.route("/healthz")
+def healthz():
+    # 서버 깨우기·상태 확인 전용. DB 를 건드리지 않아 가볍고 빠릅니다.
+    return "ok", 200, {"Cache-Control": "no-store"}
+
+
 @app.route("/login")
 def login():
     # 구글 로그인 화면으로 보냅니다. 돌아올 주소를 함께 알려줍니다.
@@ -64,7 +70,9 @@ def callback():
         conn.commit()
 
     session["user_id"] = uid          # 번호표 발급
-    return redirect("/me")
+    # /me 는 JSON 만 돌려주는 주소라, 로그인 뒤에 거기로 보내면 글자만 뜹니다.
+    # 사이트 첫 화면으로 돌려보내면 화면이 /me 로 로그인 상태를 스스로 확인합니다.
+    return redirect("/")
 
 
 @app.route("/me")
@@ -428,6 +436,13 @@ def remove_post(uid, pid):
 def logout():
     session.clear()
     return redirect("/")
+
+
+# Render 무료 플랜이 15분 뒤 서버를 끄지 않도록 스스로 깨우는 스레드.
+# gunicorn 으로 불러올 때도 실행되도록 __main__ 밖에 둡니다.
+# (RENDER_EXTERNAL_URL 이 없는 내 컴퓨터에서는 아무 일도 하지 않습니다)
+import keepalive
+keepalive.start()
 
 
 if __name__ == "__main__":
