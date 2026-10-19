@@ -364,6 +364,18 @@
   .improw:last-child{border-bottom:0}
   .improw .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .improw .s{flex:none;color:#6A6A5F}
+.impfind{margin:4px 0 8px;padding:8px;border:1px solid #262622;border-radius:6px}
+.impfind .row{display:flex;gap:6px;margin-bottom:6px}
+.impfind input{flex:1;min-width:0;background:transparent;border:1px solid #3A3A33;border-radius:4px;color:inherit;padding:5px 7px;font:inherit}
+.impfind .cands{display:grid;gap:6px}
+.cand{display:flex;gap:8px;align-items:center;text-align:left;background:transparent;border:1px solid #262622;border-radius:5px;padding:4px;color:inherit;cursor:pointer;font:inherit}
+.cand:hover{border-color:#8D8C7C}
+.cand:disabled{opacity:.5;cursor:default}
+.cand img{width:34px;height:50px;object-fit:cover;border-radius:2px;flex:none;background:#262622}
+.cand .m{min-width:0;line-height:1.45}
+.cand .m small{display:block;color:#6A6A5F}
+html[data-mode="light"] .impfind,html[data-mode="light"] .cand{border-color:#E3E1CF}
+html[data-mode="light"] .impfind input{border-color:#CFCDB8}
 
   #misses{font-size:11.5px;color:#8D8C7C;margin-top:9px;line-height:1.8}
   #misses b{color:var(--cream);font-weight:500}
@@ -19546,22 +19558,30 @@ function film(id) { return FILM_BY_ID[id]; }
 
   /* 검색 결과의 첫 번째를 그냥 쓰면 엉뚱한 영화가 들어옵니다.
      제목이 얼마나 맞는지, 연도가 가까운지, 얼마나 알려진 작품인지로 골라냅니다. */
+  function normT(x) { return String(x || "").replace(/[\s:·.,'"!?-]/g, "").toLowerCase(); }
+
+  /* 한 검색 결과가 찾는 영화일 가능성을 점수로 냅니다. */
+  function scoreHit(h, q, year) {
+    var want = normT(q);
+    var t1 = normT(h.title), t2 = normT(h.original_title);
+    var y = parseInt(String(h.release_date || "").slice(0, 4), 10) || 0;
+    var sc = 0;
+    if (t1 === want || t2 === want) sc += 24;
+    else if (t1.indexOf(want) >= 0 || t2.indexOf(want) >= 0) sc += 9;
+    else if (want.indexOf(t1) >= 0 || want.indexOf(t2) >= 0) sc += 6;
+    if (year && y) {
+      var gap = Math.abs(y - year);
+      sc += gap === 0 ? 8 : (gap === 1 ? 4 : (gap <= 3 ? 1 : -8));
+    }
+    sc += Math.min((h.vote_count || 0) / 700, 6);
+    if ((h.vote_count || 0) < 15) sc -= 5;
+    return sc;
+  }
+
   function pickBest(list, q, year) {
-    function norm(x) { return String(x || "").replace(/[\s:·.,'"!?-]/g, "").toLowerCase(); }
-    var want = norm(q), best = null, bs = -1e9;
+    var best = null, bs = -1e9;
     (list || []).forEach(function (h) {
-      var t1 = norm(h.title), t2 = norm(h.original_title);
-      var y = parseInt(String(h.release_date || "").slice(0, 4), 10) || 0;
-      var sc = 0;
-      if (t1 === want || t2 === want) sc += 24;
-      else if (t1.indexOf(want) >= 0 || t2.indexOf(want) >= 0) sc += 9;
-      else if (want.indexOf(t1) >= 0 || want.indexOf(t2) >= 0) sc += 6;
-      if (year && y) {
-        var gap = Math.abs(y - year);
-        sc += gap === 0 ? 8 : (gap === 1 ? 4 : (gap <= 3 ? 1 : -8));
-      }
-      sc += Math.min((h.vote_count || 0) / 700, 6);
-      if ((h.vote_count || 0) < 15) sc -= 5;
+      var sc = scoreHit(h, q, year);
       if (sc > bs) { bs = sc; best = h; }
     });
     return (bs > 0) ? best : null;
@@ -20678,13 +20698,209 @@ function film(id) { return FILM_BY_ID[id]; }
         score: isNaN(rating) ? 0 : Math.round(Math.max(0, Math.min(5, rating)) * 2) / 2,
         comment: g("review"),
         spoiler: g("spoiler").toLowerCase() === "true",
-        at: (g("watchedat") || g("watched date") || g("date")).slice(0, 10)
+        at: (g("watchedat") || g("watched date") || g("date")).slice(0, 10),
+        /* 왓챠피디아 내보내기에는 감독 이름이 들어 있습니다. 제목으로 못 찾을 때 씁니다. */
+        directors: g("directors").split(",").map(function (x) { return x.trim(); })
+                     .filter(Boolean)
       });
     });
     return { kind: kind, items: items };
   }
 
   var CAP = 300;                                        // 한 번에 처리할 최대 편수
+
+  /* ── 제목으로 못 찾을 때를 위한 도우미 ──
+     왓챠피디아 제목은 TMDB 와 다른 경우가 많습니다.
+       · "화양연화 특별판", "클리프행어 리마스터드" — 판본 꼬리표가 붙음
+       · "엔딩 노트" ↔ "엔딩노트" — 띄어쓰기가 다름
+       · "셀린느와 줄리…" ↔ "셀린과 줄리…" — 외래어 표기가 다름
+       · TMDB 에 한국어 제목이 아예 없음
+     그래서 제목을 여러 모양으로 바꿔 보고, 그래도 안 되면 감독 + 연도로 찾습니다. */
+  var EDITION_RE = /(디지털\s*)?(리마스터(드|링)?|특별판|감독판|디렉터스\s*컷|완전판|확장판|무삭제판|재개봉|기념판|\d+\s*주년(\s*기념)?|4K|IMAX|아이맥스|UHD)/gi;
+
+  function esc(x) {
+    return String(x == null ? "" : x).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  /* 검색어 후보. yearOnly 는 너무 짧아져 엉뚱한 영화가 걸릴 수 있어 연도로 확인할 때만 씁니다. */
+  function titleVariants(t) {
+    var out = [], seen = {};
+    function add(x, yearOnly) {
+      x = String(x || "").replace(/\s+/g, " ").trim();
+      if (!x || seen[x]) return;
+      seen[x] = 1;
+      out.push({ q: x, yearOnly: !!yearOnly });
+    }
+    add(t);
+    var c = String(t || "").replace(/[\(\[（【][^\)\]）】]*[\)\]）】]/g, " ")
+                           .replace(EDITION_RE, " ").replace(/[\s\-–—:：]+$/, "");
+    add(c);
+    add(c.replace(/\s+/g, ""));
+    var parts = c.split(/\s*[:：]\s*|\s+[-–—]\s+/);
+    if (parts.length > 1) add(parts[0], true);
+    return out;
+  }
+
+  /* 두 제목이 글자 단위로 얼마나 겹치는지 (0~1) */
+  function dice(x, y) {
+    x = normT(x); y = normT(y);
+    if (x.length < 2 || y.length < 2) return x === y ? 1 : 0;
+    var A = {}, B = {}, i, k, n = 0, ka = 0, kb = 0;
+    for (i = 0; i < x.length - 1; i++) A[x.substr(i, 2)] = 1;
+    for (i = 0; i < y.length - 1; i++) B[y.substr(i, 2)] = 1;
+    for (k in A) { ka++; if (B[k]) n++; }
+    for (k in B) kb++;
+    return 2 * n / (ka + kb);
+  }
+
+  /* 감독 이름으로 TMDB 인물을 찾고, 그 감독의 연출작 중 연도가 맞는 영화들을 모읍니다. */
+  function directorFilms(it, a) {
+    var names = (it.directors || []).slice(0, 3), pool = {};
+    return names.reduce(function (p, name) {
+      return p.then(function () {
+        return retry(function () {
+          return tmdb("/search/person", a, "&query=" + encodeURIComponent(name));
+        }, 2).then(function (r) {
+          var all = r.results || [];
+          var ppl = all.filter(function (x) { return x.known_for_department === "Directing"; });
+          ppl = (ppl.length ? ppl : all).slice(0, 3);
+          return Promise.all(ppl.map(function (pp) {
+            return retry(function () {
+              return tmdb("/person/" + pp.id + "/movie_credits", a, "");
+            }, 2).then(function (c) {
+              (c.crew || []).forEach(function (m) { if (m.job === "Director") pool[m.id] = m; });
+            }, function () {});
+          }));
+        }, function () {});
+      });
+    }, Promise.resolve()).then(function () {
+      return Object.keys(pool).map(function (k) { return pool[k]; });
+    });
+  }
+
+  /* 감독 + 연도로 한 편을 고릅니다. 연도가 1년 안쪽으로 맞아야 하고,
+     같은 조건이 여럿이면 제목이 더 닮은 쪽을 고릅니다. */
+  function byDirector(it, a) {
+    if (!it.year || !(it.directors || []).length) return Promise.resolve(null);
+    return directorFilms(it, a).then(function (list) {
+      var best = null, bs = -1e9;
+      list.forEach(function (m) {
+        var y = parseInt(String(m.release_date || "").slice(0, 4), 10) || 0;
+        if (!y) return;
+        var gap = Math.abs(y - it.year);
+        var sim = Math.max(dice(it.title, m.title), dice(it.title, m.original_title));
+        if (gap > 2 || (gap === 2 && sim < 0.3)) return;
+        var sc = (gap === 0 ? 10 : (gap === 1 ? 6 : 2)) + sim * 8 + Math.min((m.vote_count || 0) / 500, 3);
+        if (sc > bs) { bs = sc; best = m; }
+      });
+      if (best) best._how = "감독+연도";
+      return best;
+    });
+  }
+
+  /* 제목 변형 → 감독+연도 순으로 찾습니다. 첫 두 단계는 예전과 같습니다. */
+  function findMovie(it, a) {
+    var steps = [];
+    titleVariants(it.title).forEach(function (v) {
+      if (it.year) steps.push({ q: v.q, y: it.year });
+      if (!v.yearOnly) steps.push({ q: v.q, y: null });
+    });
+    var i = 0;
+    function next() {
+      if (i >= steps.length) return Promise.resolve(null);
+      var st = steps[i], first = (i === 0 || i === 1);
+      i++;
+      return search(st.q, st.y, a).then(function (h) {
+        if (h) { h._how = first ? "제목" : "제목 변형"; return h; }
+        return next();
+      });
+    }
+    return next().then(function (h) { return h || byDirector(it, a); });
+  }
+
+  /* 직접 고르기용 후보. 제목 변형 검색 + 감독 연출작을 합쳐 점수순으로 돌려줍니다. */
+  function candidatesFor(it, a, typed) {
+    var pool = {};
+    function add(h, q, bonus) {
+      if (!h || !h.id) return;
+      var sc = scoreHit(h, q, it.year) + (bonus || 0) +
+               Math.max(dice(q, h.title), dice(q, h.original_title)) * 6;
+      if (!pool[h.id] || sc > pool[h.id].sc) pool[h.id] = { h: h, sc: sc };
+    }
+    var m = typed && (/\/movie\/(\d+)/.exec(typed) || /^\s*(\d{2,9})\s*$/.exec(typed));
+    if (m) {
+      return retry(function () { return tmdb("/movie/" + m[1], a, ""); }, 2)
+        .then(function (d) { return [d]; }, function () { return []; });
+    }
+    var qs = typed ? [typed] : titleVariants(it.title).map(function (v) { return v.q; });
+    return qs.reduce(function (p, q) {
+      return p.then(function () {
+        return retry(function () {
+          return tmdb("/search/movie", a, "&query=" + encodeURIComponent(q));
+        }, 2).then(function (r) {
+          (r.results || []).slice(0, 6).forEach(function (h) { add(h, q, 0); });
+        }, function () {});
+      });
+    }, Promise.resolve()).then(function () {
+      if (typed || !it.year) return;
+      return directorFilms(it, a).then(function (list) {
+        list.forEach(function (h) {
+          var y = parseInt(String(h.release_date || "").slice(0, 4), 10) || 0;
+          if (y && Math.abs(y - it.year) <= 3) add(h, it.title, 8);
+        });
+      });
+    }).then(function () {
+      return Object.keys(pool).map(function (k) { return pool[k]; })
+        .sort(function (x, y) { return y.sc - x.sc; }).slice(0, 8)
+        .map(function (e) { return e.h; });
+    });
+  }
+
+  /* 가져온 별점·코멘트를 작품에 붙이고 저장합니다. */
+  function applyRecord(it, f) {
+    var r = APP.rec(f.id);
+    if (it.score) r.score = it.score;
+    if (it.comment) { r.comment = it.comment; r.spoiler = it.spoiler; }
+    if (it.at) r.at = it.at;
+    if (it.score || it.comment) r.status = "봤어요";
+    APP.persist(f.id);                 // 서버(또는 이 브라우저)에 저장합니다
+  }
+
+  var imp = { ok: 0, total: 0, fails: [], guessed: [], kind: "" };
+
+  function impSummary() {
+    var left = imp.fails.filter(Boolean).length;
+    $("impState").textContent = imp.ok + "편 가져옴";
+    $("impLog").innerHTML = "<b>" + imp.ok + "편</b>을 서재에 담고 별점·코멘트를 옮겼습니다." +
+      (left ? " " + left + "편은 TMDB 에서 찾지 못했습니다. 아래에서 <b>직접 찾기</b>로 고를 수 있습니다." : "");
+  }
+
+  function impRender() {
+    var html = "";
+    var g = imp.guessed;
+    if (g.length) {
+      html += "<b>감독 + 연도로 맞춘 작품 " + g.length + "편</b> — 맞는지 확인해 주세요" +
+        g.slice(0, 40).map(function (x) {
+          return '<div class="improw"><span class="t">' + esc(x.title) + '</span>' +
+                 '<span class="s">' + esc(x.matched) + "</span></div>";
+        }).join("");
+    }
+    var left = imp.fails.map(function (it, i) { return it ? i : -1; }).filter(function (i) { return i >= 0; });
+    if (left.length) {
+      html += '<div style="margin-top:' + (g.length ? 14 : 0) + 'px"><b>못 찾은 작품</b></div>' +
+        left.slice(0, 60).map(function (i) {
+          var it = imp.fails[i];
+          return '<div class="improw" id="impRow-' + i + '"><span class="t">' + esc(it.title) +
+                 (it.year ? " · " + it.year : "") +
+                 (it.directors.length ? " · " + esc(it.directors[0]) : "") + "</span>" +
+                 '<span class="s"><button class="mini" data-find="' + i + '">직접 찾기</button></span></div>' +
+                 '<div class="impfind" id="impFind-' + i + '" hidden></div>';
+        }).join("") +
+        (left.length > 60 ? '<div class="improw"><span class="t">… 외 ' + (left.length - 60) + "편</span></div>" : "");
+    }
+    $("impOut").innerHTML = html;
+  }
 
   function runImport(text) {
     var key = ($("key").value || "").replace(/\s+/g, "");
@@ -20699,29 +20915,27 @@ function film(id) { return FILM_BY_ID[id]; }
     }
 
     var a = auth(key);
-    var all = parsed.items, items = all.slice(0, CAP), done = 0, ok = 0;
-    var fails = [];
+    var all = parsed.items, items = all.slice(0, CAP), done = 0;
+    imp = { ok: 0, total: all.length, fails: [], guessed: [], kind: parsed.kind };
     $("impGo").disabled = true;
     $("impOut").innerHTML = "";
     $("impLog").innerHTML = "<b>" + parsed.kind + "</b> 형식 · " + all.length + "편을 읽었습니다" +
       (all.length > CAP ? " (이번에는 앞 " + CAP + "편만 처리합니다)" : "") + ". 맞추는 중…";
 
     function one(it) {
-      return search(it.title, it.year || null, a)
-        .then(function (h) { return h || search(it.title, null, a); })
+      return findMovie(it, a)
         .then(function (h) {
-          if (!h) { fails.push(it.title); return; }
+          if (!h) { imp.fails.push(it); return; }
           return APP.addByTmdbId(h.id).then(function (f) {
-            var r = APP.rec(f.id);
-            if (it.score) r.score = it.score;
-            if (it.comment) { r.comment = it.comment; r.spoiler = it.spoiler; }
-            if (it.at) r.at = it.at;
-            if (it.score || it.comment) r.status = "봤어요";
-            APP.persist(f.id);                 // 서버(또는 이 브라우저)에 저장합니다
-            ok++;
+            applyRecord(it, f);
+            imp.ok++;
+            if (h._how === "감독+연도") {
+              imp.guessed.push({ title: it.title,
+                matched: (f.ko || "") + " (" + (f.year || "") + ")" });
+            }
           });
         })
-        .catch(function () { fails.push(it.title); });
+        .catch(function () { imp.fails.push(it); });
     }
 
     var queue = items.slice();
@@ -20742,24 +20956,86 @@ function film(id) { return FILM_BY_ID[id]; }
       APP.notify();
       libSave(); libRefresh(); reloadAll();
       $("impGo").disabled = false;
-      $("impState").textContent = ok + "편 가져옴";
-      $("impLog").innerHTML = "<b>" + ok + "편</b>을 서재에 담고 별점·코멘트를 옮겼습니다." +
-        (fails.length ? " " + fails.length + "편은 TMDB 에서 찾지 못했습니다." : "");
-      if (fails.length) {
-        $("impOut").innerHTML = "<b>못 찾은 작품</b>" +
-          fails.slice(0, 40).map(function (t) {
-            return '<div class="improw"><span class="t">' + t + '</span>' +
-                   '<span class="s">검색 결과 없음</span></div>';
-          }).join("") +
-          (fails.length > 40 ? '<div class="improw"><span class="t">… 외 ' +
-            (fails.length - 40) + "편</span></div>" : "");
-      }
+      impSummary();
+      impRender();
       if (all.length > CAP) {
         $("impOut").innerHTML += '<p class="hint">남은 ' + (all.length - CAP) +
           "편은 CSV 에서 처리한 줄을 지우고 다시 넣으면 이어서 가져옵니다.</p>";
       }
     });
   }
+
+  /* ── 못 찾은 작품을 직접 고르기 ── */
+  function candHTML(list, i) {
+    if (!list.length) return '<div class="hint">후보가 없습니다. 위 칸에 영어 제목이나 TMDB 주소를 넣어 보세요.</div>';
+    return '<div class="cands">' + list.map(function (h) {
+      var y = String(h.release_date || "").slice(0, 4);
+      return '<button class="cand" data-pick="' + h.id + '" data-fi="' + i + '">' +
+        (h.poster_path ? '<img src="https://image.tmdb.org/t/p/w92' + h.poster_path + '" alt="">' : "<img alt=\"\">") +
+        '<span class="m"><b>' + esc(h.title || h.original_title) + "</b>" + (y ? " (" + y + ")" : "") +
+        "<small>" + esc(h.original_title || "") + "</small></span></button>";
+    }).join("") + "</div>";
+  }
+
+  function openFind(i, typed) {
+    var box = $("impFind-" + i), it = imp.fails[i];
+    if (!box || !it) return;
+    var key = ($("key").value || "").replace(/\s+/g, "");
+    var a = auth(key);
+    if (box.hidden || typed !== undefined) {
+      var prev = box.querySelector("input");
+      var val = typed !== undefined ? typed : (prev ? prev.value : it.title);
+      box.hidden = false;
+      box.innerHTML = '<div class="row"><input type="text" value="' + esc(val) +
+        '" placeholder="제목 · TMDB 주소 · TMDB 번호" data-q="' + i + '">' +
+        '<button class="mini" data-go="' + i + '">검색</button></div><div class="res hint">찾는 중…</div>';
+      candidatesFor(it, a, typed && typed.trim() ? typed : null).then(function (list) {
+        box.querySelector(".res").innerHTML = candHTML(list, i);
+        box.querySelector(".res").classList.remove("hint");
+      }).catch(function () {
+        box.querySelector(".res").innerHTML = "검색하지 못했습니다. 잠시 뒤 다시 시도해 주세요.";
+      });
+    } else {
+      box.hidden = true;
+    }
+  }
+
+  function pickCand(i, tmdbId, btn) {
+    var it = imp.fails[i];
+    if (!it) return;
+    btn.disabled = true;
+    APP.addByTmdbId(tmdbId).then(function (f) {
+      applyRecord(it, f);
+      imp.ok++;
+      imp.fails[i] = null;
+      var row = $("impRow-" + i), box = $("impFind-" + i);
+      if (row) row.innerHTML = '<span class="t">' + esc(it.title) + '</span><span class="s">담았습니다 → ' +
+        esc((f.ko || "") + " (" + (f.year || "") + ")") + "</span>";
+      if (box) box.parentNode.removeChild(box);
+      libSave(); libRefresh(); APP.notify(); reloadAll();
+      impSummary();
+    }).catch(function () {
+      btn.disabled = false;
+      btn.insertAdjacentHTML("afterend", '<span class="hint"> 담지 못했습니다</span>');
+    });
+  }
+
+  $("impOut").addEventListener("click", function (e) {
+    var t = e.target.closest ? e.target.closest("button") : null;
+    if (!t) return;
+    if (t.hasAttribute("data-find")) openFind(+t.getAttribute("data-find"));
+    else if (t.hasAttribute("data-go")) {
+      var i = +t.getAttribute("data-go"), inp = $("impFind-" + i).querySelector("input");
+      openFind(i, inp ? inp.value : "");
+    } else if (t.hasAttribute("data-pick")) {
+      pickCand(+t.getAttribute("data-fi"), +t.getAttribute("data-pick"), t);
+    }
+  });
+  $("impOut").addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" || !e.target.hasAttribute || !e.target.hasAttribute("data-q")) return;
+    e.preventDefault();
+    openFind(+e.target.getAttribute("data-q"), e.target.value);
+  });
 
   $("impFile").addEventListener("change", function () {
     var f = this.files && this.files[0];
