@@ -80,6 +80,11 @@ def me():
             )
             row = cur.fetchone()
 
+    # If the user id in session no longer exists in DB, clear session and treat as not logged in.
+    if not row:
+        session.clear()
+        return jsonify({"logged_in": False}), 401
+
     return jsonify({
         "logged_in": True,
         "id": row[0],
@@ -339,7 +344,7 @@ def read_post(pid):
     if not r:
         return jsonify({"error": "없는 글입니다"}), 404
     return jsonify({"id": r[0], "who": r[1], "title": r[2], "body": r[3],
-                    "at": r[4].isoformat(), "edited": r[5].isoformat(),
+                    "at": r[4].isoformat(), "edited": (r[5].isoformat() if r[5] else None),
                     "mine": bool(r[6])})
 
 
