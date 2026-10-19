@@ -582,97 +582,109 @@
         <button class="go" id="watchaCopy" type="button">스크립트 복사</button>
         <span class="hint" id="watchaCopied" aria-live="polite"></span>
       </div>
-      <textarea id="watchaScript" readonly spellcheck="false" rows="8" aria-label="왓챠피디아 내보내기 스크립트" style="margin-top:8px;width:100%;box-sizing:border-box;font-family:monospace;font-size:11px">(async () =&gt; {
-  const sleep = (ms) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
-  const link = document.querySelector('a[href*="/users/"]');
-  if (!link) { console.error("프로필 링크를 못 찾았어요. 왓챠피디아에 로그인했는지 확인하고, pedia.watcha.com 탭에서 다시 실행하세요."); return; }
-  const uid = link.href.match(/\/users\/([^/?#]+)/)[1];
-  const HEAD = {
-    "x-watcha-client": "watcha-WebApp",
-    "x-watcha-client-language": "ko",
-    "x-watcha-client-region": "KR",
-    "x-watcha-client-version": "2.1.0",
-  };
-
-  // 요청 한도(429)에 걸리면 잠깐 쉬었다가 같은 요청을 다시 보냅니다.
-  async function api(path) {
-    for (let i = 1; i &lt;= 10; i++) {
-      const res = await fetch(path.startsWith("http") ? path : "https://api-pedia.watcha.com" + path,
-        { credentials: "same-origin", headers: HEAD });
+      <textarea id="watchaScript" readonly spellcheck="false" rows="8" aria-label="왓챠피디아 내보내기 스크립트" style="margin-top:8px;width:100%;box-sizing:border-box;font-family:monospace;font-size:11px">!async function(){
+  const userId = document.querySelector('a[href*="/users/"]').href.replace(/^.*\/users\/(.*)$/, "$1"),
+  deviceId = document.cookie.split('; ').find(r =&gt; r.startsWith('_c_pdi='))?.split('=')[1] || '',
+  sleep = ms =&gt; new Promise(res =&gt; setTimeout(res, ms)),
+  request = async (url) =&gt; {
+    while (true) {
+      await sleep(500);
+      const res = await fetch(`https://pedia.watcha.com${url}`, {
+        credentials: "same-origin",
+        headers: {
+          "accept": "application/vnd.frograms+json;version=2.1.0",
+          "x-frograms-app-code": "Galaxy",
+          "x-frograms-client": "Galaxy-Web-App",
+          "x-frograms-client-version": "2.1.0",
+          "x-frograms-version": "2.1.0",
+          "x-frograms-device-identifier": deviceId,
+          "x-frograms-galaxy-language": "ko",
+          "x-frograms-galaxy-region": "KR"
+        }
+      });
       if (res.status === 429) {
-        const wait = Math.min(30000, 3000 * i);
-        console.log("한도에 걸렸어요(429). " + wait / 1000 + "초 쉬고 다시 시도합니다 (" + i + "/10)");
-        await sleep(wait);
+        console.log(`429 발생, 10초 후 재시도...`);
+        await sleep(10000);
         continue;
       }
-      if (!res.ok) throw new Error("요청 실패 " + res.status + " " + path);
-      return (await res.json()).result;
+      const json = await res.json();
+      if (!json.result) {
+        console.log(`result 없음, 5초 후 재시도...`, json);
+        await sleep(5000);
+        continue;
+      }
+      return json;
     }
-    throw new Error("429 가 계속돼요. 몇 분 뒤에 다시 실행해 주세요.");
-  }
-
-  let got = 0, total = 0;
-  async function pages(path) {
-    const out = [];
-    let page = await api(path);
-    for (;;) {
-      out.push(...page.result);
-      got += page.result.length;
-      if (total) console.log("진행 " + Math.min(100, Math.round(got / total * 100)) + "%");
-      if (!page.next_uri) break;
-      await sleep(400);
-      page = await api(page.next_uri);
+  },
+  fetchAll = async (url, onProgress) =&gt; {
+    const items = [];
+    let next = url;
+    while (next) {
+      const json = await request(next);
+      items.push(...json.result.result);
+      onProgress &amp;&amp; onProgress(json.result.result.length);
+      next = json.result.next_uri;
     }
-    return out;
-  }
+    return items;
+  },
+  merge = (ratings, comments, type) =&gt; ratings.map(e =&gt; {
+    const c = comments.find(c =&gt; c.content_code === e.content.code),
+    code = e.content.code,
+    watchedAt = (() =&gt; {
+      const d = new Date(c?.watched_at || e.user_content_action.watched_at);
+      return isNaN(d) ? '' : `${d.getFullYear()}-${`0${d.getMonth()+1}`.slice(-2)}-${`0${d.getDate()}`.slice(-2)}`;
+    })(),
+    directors = (e.content.director_names || c?.content?.director_names || []).join(),
+    review = c?.text?.trim().replace(/"/g, '""') || '';
+    return [
+      code,
+      `https://pedia.watcha.com/ko-KR/contents/${code}`,
+      e.content.title.replace(/"/g, ""),
+      type,
+      e.content.year,
+      directors,
+      watchedAt,
+      +e.user_content_action.rating / 2,
+      review,
+      c?.spoiler ?? ''
+    ];
+  });
 
-  const day = (s) =&gt; {
-    if (!s) return "";
-    const d = new Date(s);
-    return isNaN(d) ? "" : d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2);
-  };
-  const q = (v) =&gt; '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
+  await (async () =&gt; {
+    const bar = Object.assign(document.createElement("div"), { style: "position:fixed;left:0;top:0;right:0;height:59px;z-index:60;display:flex;align-items:center;background-color:#fff" }),
+    inner = Object.assign(document.createElement("div"), { style: "max-width:1320px;width:100%;margin:0 auto;padding:0 32px;" }),
+    msg = Object.assign(document.createElement("p"), { style: "color:#7e7e7e;font-size:15px;letter-spacing:-0.3px;" }),
+    pct = Object.assign(document.createElement("span"), { style: "font-weight:bold" });
+    msg.innerText = "리뷰 다운로드 중입니다. ";
+    msg.appendChild(pct);
+    inner.appendChild(msg);
+    bar.appendChild(inner);
+    document.body.appendChild(bar);
 
-  try {
-    console.log("내려받기를 시작합니다 (" + uid + ")");
-    total = ((await api("/api/users/" + uid)).ratings_count || 0) * 2;   // 별점 + 코멘트 요청 수의 대략치
-    const rows = [];
-    for (const kind of ["movies", "tv_seasons"]) {
-      const ratings = await pages("/api/users/" + uid + "/contents/" + kind + "/ratings");
-      const comments = await pages("/api/users/" + uid + "/contents/" + kind + "/comments");
-      const cmt = new Map(comments.map((c) =&gt; [c.content.code, c]));
-      const seen = new Set();
-      const make = (r, c) =&gt; {
-        const ct = (r || c).content;
-        const act = (r &amp;&amp; r.user_content_action) || {};
-        return [
-          ct.code,
-          "https://pedia.watcha.com/ko-KR/contents/" + ct.code,
-          ct.title,
-          kind === "tv_seasons" ? "TV" : "MOVIE",
-          ct.year,
-          ((c &amp;&amp; c.content.director_names) || ct.director_names || []).join(),
-          day((c &amp;&amp; c.user_content_action &amp;&amp; c.user_content_action.watched_at) || act.watched_at || (r &amp;&amp; r.created_at) || (c &amp;&amp; c.created_at)),
-          act.rating ? act.rating / 2 : "",
-          c &amp;&amp; c.text ? c.text.trim() : "",
-          c ? !!c.spoiler : "",
-        ];
-      };
-      ratings.forEach((r) =&gt; { seen.add(r.content.code); rows.push(make(r, cmt.get(r.content.code))); });
-      comments.forEach((c) =&gt; { if (!seen.has(c.content.code)) rows.push(make(null, c)); });
-    }
-
-    const head = "ID,URL,Title,Type,Year,Directors,WatchedAt,Rating,Review,Spoiler\n";
-    const csv = "﻿" + head + rows.map((r) =&gt; r.map(q).join(",")).join("\n");
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
-    a.download = uid + "-watcha.csv";
-    a.click();
-    console.log("끝! " + rows.length + "편을 " + uid + "-watcha.csv 로 저장했어요.");
-  } catch (e) {
-    console.error("실패:", e.message);
-  }
-})();</textarea>
+    try {
+      const totalCount = (await request(`/api/users/${userId}`)).result?.ratings_count || 0,
+      counted = { n: 0 },
+      progress = (n) =&gt; { counted.n += n; pct.innerText = totalCount ? `${(counted.n / totalCount * 100).toFixed(0)}%` : ''; },
+      [mRatings, mComments, tRatings, tComments] = await Promise.all([
+        fetchAll(`/api/users/${userId}/contents/movies/ratings`, progress),
+        fetchAll(`/api/users/${userId}/contents/movies/comments`, progress),
+        fetchAll(`/api/users/${userId}/contents/tv_seasons/ratings`, progress),
+        fetchAll(`/api/users/${userId}/contents/tv_seasons/comments`, progress),
+      ]),
+      rows = [
+        ...merge(mRatings, mComments, "MOVIE"),
+        ...merge(tRatings, tComments, "TV")
+      ],
+      csv = `ID,URL,Title,Type,Year,Directors,WatchedAt,Rating,Review,Spoiler,\n` + rows.map(r =&gt; `"${r.join('","')}"`).join("\n"),
+      blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" }),
+      link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `${userId}-watcha.csv`;
+      link.click();
+    } catch(err) { console.error(err) }
+    bar.remove();
+  })()
+}();</textarea>
       <p class="hint">
         <b>레터박스</b> — Settings → Import &amp; Export → Export Your Data 의 <code>ratings.csv</code>.<br>
         어느 쪽이든 형식을 알아서 알아봅니다. 영화만 가져오고 TV 는 건너뜁니다.
@@ -6978,12 +6990,15 @@ window.addEventListener("message", function (e) {
       f = FILMS.filter(function(x){ return x.tmdbId === n; })[0];
       if (f) { cur = f; return true; }
 
-      /* 서재에도 없으면 담아서 엽니다. 받아오는 데 1~2초 걸리므로
-         그동안 빈 화면이 아니라 "받아오는 중" 을 보여 줍니다. */
+      /* 서재에도 없으면 서재에 담지 않고 정보만 받아 보여 줍니다.
+         예전에는 누르기만 해도 서재에 담겨 진열장에 올라갔습니다.
+         이제는 "서재에 담기" 를 누르거나 별점·코멘트·관람 상태를 남길 때만 담깁니다.
+         받아오는 데 1~2초 걸리므로 그동안 "받아오는 중" 을 보여 줍니다. */
       $("detail").innerHTML =
         '<div class="loading"><b>불러오는 중</b><span>TMDB 에서 받아옵니다…</span></div>';
-      APP.addByTmdbId(n).then(function(g){
-        cur = g; renderDetail(); say(g.ko + " 을 담고 열었습니다.");
+      APP.preview(n).then(function(d){
+        cur = asTemp(d, n); renderDetail();
+        say(d.ko + " 정보를 열었습니다. 담기를 누르면 서재에 들어갑니다.");
       }).catch(function(){
         $("detail").innerHTML =
           '<div class="loading"><b>담지 못했습니다</b><span>다시 시도해 주세요</span></div>';
@@ -9867,31 +9882,19 @@ window.addEventListener("message", function (e) {
             '<button class="obtn" data-add="'+x.tmdbId+'">담기</button></div>';
         }).join("") + "</div>" +
         '<div class="oside"><div id="oinfo"><div class="oempty">' +
-          "누르거나 커서를 올리면<br>여기에 정보가 나옵니다</div></div></div></div>" +
+          "작품을 누르면<br>여기에 정보가 나옵니다</div></div></div></div>" +
         '<button class="chipbtn" id="findout" style="margin-top:10px">다시 찾기</button>';
     }
     return '<button class="chipbtn" id="findout">내 취향으로 찾기</button>';
   }
 
-  /* 목록에 커서를 올리면 오른쪽 칸이 그 작품으로 바뀝니다. */
+  /* 목록의 작품을 눌러야 오른쪽 칸에 정보가 나옵니다.
+     커서를 올리기만 해도 바뀌던 동작은 뺐습니다. 의도치 않게 정보가 계속 바뀌고,
+     그때마다 TMDB 에 요청이 나갔기 때문입니다. 담기 단추는 제 일을 하므로 건드리지 않습니다. */
   function bindOutsideHover(){
     var host = document.querySelector(".olist");
     if (!host) return;
     var t = null, cur = null;
-    host.addEventListener("mouseover", function(e){
-      var row = e.target.closest && e.target.closest(".orow");
-      if (!row) return;
-      var btn = row.querySelector("[data-add]");
-      if (!btn || btn.dataset.add === cur) return;
-      cur = btn.dataset.add;
-      clearTimeout(t);
-      t = setTimeout(function(){ showOutside(parseInt(cur, 10)); }, 240);
-    });
-    host.addEventListener("mouseleave", function(){ clearTimeout(t); cur = null; });
-
-    /* 눌러도 열립니다. 커서를 올리는 것만으로는 손가락 화면에서 쓸 수 없고,
-       마우스에서도 "올려두고 기다려야" 나오는 것을 모르는 사람이 많습니다.
-       담기 단추는 제 일을 해야 하므로 건드리지 않습니다. */
     host.addEventListener("click", function(e){
       if (e.target.closest && e.target.closest("[data-add]")) return;
       var row = e.target.closest && e.target.closest(".orow");
@@ -20286,7 +20289,7 @@ function film(id) { return FILM_BY_ID[id]; }
           seen[c.id] = 1; return true;
         }).sort(function (x, y) {
           return String(y.release_date || "").localeCompare(String(x.release_date || ""));
-        }).slice(0, 30);
+        });                       /* 연출작은 개수 제한 없이 전부 보여 줍니다 */
 
         if (!films.length) { qlog(name + " 이(가) 연출한 작품이 TMDB 에 없습니다."); $("qres").innerHTML = ""; return; }
         qlog("<b>" + name + "</b> 연출작 " + films.length + "편입니다. 담을 것을 고르세요.");
