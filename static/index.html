@@ -569,9 +569,111 @@
     <summary><b>기록 가져오기</b>
       <span id="impState"></span></summary>
     <div class="hookbody">
+      <p class="hint"><b>왓챠피디아</b> — 크롬에서 왓챠피디아에 로그인한 뒤 따라 하세요.</p>
+      <ol class="hint" style="margin:6px 0 10px;padding-left:20px;line-height:1.75">
+        <li>키보드 <b>F12</b> 를 눌러 개발자 도구를 열고, 위쪽 탭에서 <b>Console(콘솔)</b> 을 선택해요.</li>
+        <li>콘솔에 처음엔 붙여넣기가 막혀 있어요. <code>allow pasting</code> 이라고 치고 Enter (최초 한 번만).</li>
+        <li>아래 스크립트를 복사해 콘솔에 붙여넣고 Enter 를 눌러요.</li>
+        <li>평점이 많으면 몇 분 걸려요. 중간에 429 메시지가 떠도 정상이니, 창을 닫지 말고 끝날 때까지 기다리세요.</li>
+        <li>끝나면 <code>(아이디)-watcha.csv</code> 파일이 자동으로 저장돼요.</li>
+        <li>그 파일을 이 화면에 올리면 끝!</li>
+      </ol>
+      <div class="hookrow">
+        <button class="go" id="watchaCopy" type="button">스크립트 복사</button>
+        <span class="hint" id="watchaCopied" aria-live="polite"></span>
+      </div>
+      <textarea id="watchaScript" readonly spellcheck="false" rows="8" aria-label="왓챠피디아 내보내기 스크립트" style="margin-top:8px;width:100%;box-sizing:border-box;font-family:monospace;font-size:11px">(async () =&gt; {
+  const sleep = (ms) =&gt; new Promise((r) =&gt; setTimeout(r, ms));
+  const link = document.querySelector('a[href*="/users/"]');
+  if (!link) { console.error("프로필 링크를 못 찾았어요. 왓챠피디아에 로그인했는지 확인하고, pedia.watcha.com 탭에서 다시 실행하세요."); return; }
+  const uid = link.href.match(/\/users\/([^/?#]+)/)[1];
+  const HEAD = {
+    "x-watcha-client": "watcha-WebApp",
+    "x-watcha-client-language": "ko",
+    "x-watcha-client-region": "KR",
+    "x-watcha-client-version": "2.1.0",
+  };
+
+  // 요청 한도(429)에 걸리면 잠깐 쉬었다가 같은 요청을 다시 보냅니다.
+  async function api(path) {
+    for (let i = 1; i &lt;= 10; i++) {
+      const res = await fetch(path.startsWith("http") ? path : "https://api-pedia.watcha.com" + path,
+        { credentials: "same-origin", headers: HEAD });
+      if (res.status === 429) {
+        const wait = Math.min(30000, 3000 * i);
+        console.log("한도에 걸렸어요(429). " + wait / 1000 + "초 쉬고 다시 시도합니다 (" + i + "/10)");
+        await sleep(wait);
+        continue;
+      }
+      if (!res.ok) throw new Error("요청 실패 " + res.status + " " + path);
+      return (await res.json()).result;
+    }
+    throw new Error("429 가 계속돼요. 몇 분 뒤에 다시 실행해 주세요.");
+  }
+
+  let got = 0, total = 0;
+  async function pages(path) {
+    const out = [];
+    let page = await api(path);
+    for (;;) {
+      out.push(...page.result);
+      got += page.result.length;
+      if (total) console.log("진행 " + Math.min(100, Math.round(got / total * 100)) + "%");
+      if (!page.next_uri) break;
+      await sleep(400);
+      page = await api(page.next_uri);
+    }
+    return out;
+  }
+
+  const day = (s) =&gt; {
+    if (!s) return "";
+    const d = new Date(s);
+    return isNaN(d) ? "" : d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2);
+  };
+  const q = (v) =&gt; '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
+
+  try {
+    console.log("내려받기를 시작합니다 (" + uid + ")");
+    total = ((await api("/api/users/" + uid)).ratings_count || 0) * 2;   // 별점 + 코멘트 요청 수의 대략치
+    const rows = [];
+    for (const kind of ["movies", "tv_seasons"]) {
+      const ratings = await pages("/api/users/" + uid + "/contents/" + kind + "/ratings");
+      const comments = await pages("/api/users/" + uid + "/contents/" + kind + "/comments");
+      const cmt = new Map(comments.map((c) =&gt; [c.content.code, c]));
+      const seen = new Set();
+      const make = (r, c) =&gt; {
+        const ct = (r || c).content;
+        const act = (r &amp;&amp; r.user_content_action) || {};
+        return [
+          ct.code,
+          "https://pedia.watcha.com/ko-KR/contents/" + ct.code,
+          ct.title,
+          kind === "tv_seasons" ? "TV" : "MOVIE",
+          ct.year,
+          ((c &amp;&amp; c.content.director_names) || ct.director_names || []).join(),
+          day((c &amp;&amp; c.user_content_action &amp;&amp; c.user_content_action.watched_at) || act.watched_at || (r &amp;&amp; r.created_at) || (c &amp;&amp; c.created_at)),
+          act.rating ? act.rating / 2 : "",
+          c &amp;&amp; c.text ? c.text.trim() : "",
+          c ? !!c.spoiler : "",
+        ];
+      };
+      ratings.forEach((r) =&gt; { seen.add(r.content.code); rows.push(make(r, cmt.get(r.content.code))); });
+      comments.forEach((c) =&gt; { if (!seen.has(c.content.code)) rows.push(make(null, c)); });
+    }
+
+    const head = "ID,URL,Title,Type,Year,Directors,WatchedAt,Rating,Review,Spoiler\n";
+    const csv = "﻿" + head + rows.map((r) =&gt; r.map(q).join(",")).join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    a.download = uid + "-watcha.csv";
+    a.click();
+    console.log("끝! " + rows.length + "편을 " + uid + "-watcha.csv 로 저장했어요.");
+  } catch (e) {
+    console.error("실패:", e.message);
+  }
+})();</textarea>
       <p class="hint">
-        <b>왓챠피디아</b> — github.com/erinyskim/watchapedia-export 의 방법으로 CSV 를 내려받습니다.
-        주소창에 <code>javascript:</code> 를 치고 그 뒤에 스크립트를 붙여넣는 방식입니다.<br>
         <b>레터박스</b> — Settings → Import &amp; Export → Export Your Data 의 <code>ratings.csv</code>.<br>
         어느 쪽이든 형식을 알아서 알아봅니다. 영화만 가져오고 TV 는 건너뜁니다.
       </p>
@@ -683,6 +785,22 @@
 
 <p aria-live="polite" class="sr" id="live"></p>
 
+<script>
+(function () {
+  var b = document.getElementById("watchaCopy");
+  if (!b) return;
+  b.addEventListener("click", function () {
+    var t = document.getElementById("watchaScript"), m = document.getElementById("watchaCopied");
+    function done(ok) { if (m) m.textContent = ok ? "복사했습니다. 콘솔에 붙여넣으세요." : "복사하지 못했습니다. 아래 상자를 눌러 전체 선택 후 복사하세요."; }
+    t.focus(); t.select();
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(t.value).then(function () { done(true); }, function () { done(document.execCommand("copy")); });
+      } else { done(document.execCommand("copy")); }
+    } catch (e) { done(false); }
+  });
+})();
+</script>
 <script type="text/html" id="src-shop"><!DOCTYPE html>
 <html lang="ko">
 <head>
