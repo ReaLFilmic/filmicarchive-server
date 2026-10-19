@@ -143,25 +143,35 @@ def get_records(uid):
     ])
 
 
-@app.route("/api/records", methods=["POST"])
-@login_required
-def save_record(uid):
-    body = request.get_json(silent=True) or {}
+import datetime
 
-    # 들어온 값을 먼저 검사합니다. 남이 아무 값이나 보낼 수 있습니다.
+UPSERT_RECORD = (
+    "INSERT INTO records "
+    "  (user_id, tmdb_id, score, comment, watched_at, status, spoiler) "
+    "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+    "ON CONFLICT (user_id, tmdb_id) DO UPDATE SET "
+    "  score = EXCLUDED.score, comment = EXCLUDED.comment, "
+    "  watched_at = EXCLUDED.watched_at, status = EXCLUDED.status, "
+    "  spoiler = EXCLUDED.spoiler, updated_at = now()"
+)
+
+
+def _clean_record(body):
+    """들어온 값을 검사해 (tmdb_id, score, comment, watched_at, status, spoiler) 로 돌려줍니다.
+       문제가 있으면 (None, 오류 글) 을 돌려줍니다."""
     try:
         tmdb_id = int(body["tmdb_id"])
     except (KeyError, TypeError, ValueError):
-        return jsonify({"error": "tmdb_id 가 필요합니다"}), 400
+        return None, "tmdb_id 가 필요합니다"
 
     score = body.get("score")
     if score is not None:
         try:
             score = float(score)
         except (TypeError, ValueError):
-            return jsonify({"error": "score 가 숫자가 아닙니다"}), 400
+            return None, "score 가 숫자가 아닙니다"
         if not (0 <= score <= 5):
-            return jsonify({"error": "score 는 0 에서 5 사이입니다"}), 400
+            return None, "score 는 0 에서 5 사이입니다"
 
     comment = body.get("comment")
     if comment is not None:
@@ -173,24 +183,59 @@ def save_record(uid):
 
     spoiler = bool(body.get("spoiler"))
 
-    # 빈 글자는 날짜가 아니므로 없는 값으로 바꿉니다
-    watched_at = body.get("watched_at") or None      # 너무 긴 글을 막습니다
+    # 날짜가 아닌 글이 들어오면 DB 가 오류를 내 저장이 통째로 실패합니다.
+    # 읽을 수 없는 날짜는 없는 값으로 바꿉니다.
+    watched_at = None
+    raw = body.get("watched_at")
+    if raw:
+        try:
+            watched_at = datetime.date.fromisoformat(str(raw).strip()[:10])
+        except ValueError:
+            watched_at = None
+
+    return (tmdb_id, score, comment, watched_at, status, spoiler), None
+
+
+@app.route("/api/records", methods=["POST"])
+@login_required
+def save_record(uid):
+    got, err = _clean_record(request.get_json(silent=True) or {})
+    if err:
+        return jsonify({"error": err}), 400
 
     with db.connect() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO records "
-                "  (user_id, tmdb_id, score, comment, watched_at, status, spoiler) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
-                "ON CONFLICT (user_id, tmdb_id) DO UPDATE SET "
-                "  score = EXCLUDED.score, comment = EXCLUDED.comment, "
-                "  watched_at = EXCLUDED.watched_at, status = EXCLUDED.status, "
-                "  spoiler = EXCLUDED.spoiler, updated_at = now()",
-                (uid, tmdb_id, score, comment, watched_at, status, spoiler),
-            )
+            cur.execute(UPSERT_RECORD, (uid,) + got)
         conn.commit()
 
-    return jsonify({"ok": True, "tmdb_id": tmdb_id})
+    return jsonify({"ok": True, "tmdb_id": got[0]})
+
+
+@app.route("/api/records/bulk", methods=["POST"])
+@login_required
+def save_records_bulk(uid):
+    """여러 기록을 한 번에 저장합니다. 왓챠피디아·레터박스 가져오기처럼
+       수백 편이 한꺼번에 바뀔 때, 요청을 편수만큼 보내면 DB 연결이 몰립니다."""
+    body = request.get_json(silent=True) or {}
+    items = body.get("records")
+    if not isinstance(items, list):
+        return jsonify({"error": "records 배열이 필요합니다"}), 400
+
+    rows, bad = [], 0
+    for it in items[:500]:
+        got, err = _clean_record(it if isinstance(it, dict) else {})
+        if err:
+            bad += 1
+            continue
+        rows.append((uid,) + got)
+
+    if rows:
+        with db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.executemany(UPSERT_RECORD, rows)
+            conn.commit()
+
+    return jsonify({"ok": True, "saved": len(rows), "skipped": bad})
 
 
 @app.route("/api/records/<int:tmdb_id>", methods=["DELETE"])
