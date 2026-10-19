@@ -573,7 +573,6 @@ html[data-mode="light"] .impfind input{border-color:#CFCDB8}
         <button class="mini" id="seed">IMDb Top 250 중 36편 한 번에 담기</button>
         — 나중에 하나씩 뺄 수 있습니다.</p>
       <div id="qres"></div>
-      <div id="libList"></div>
     </div>
   </details>
 
@@ -5607,17 +5606,6 @@ window.addEventListener("message", function (e) {
     border-color:transparent transparent transparent #191309;margin-left:3px}
   .tt{position:absolute;left:10px;bottom:7px;font-size:10.5px;color:#CBBFA9}
 
-  /* 내 기록 */
-  .logs{margin-top:30px}
-  .logs h3{font-family:var(--serif);font-size:18px;font-weight:700;margin:0 0 10px}
-  .log{display:flex;gap:11px;align-items:center;padding:8px 0;border-bottom:1px solid #2E251A;font-size:13px}
-  .log:last-child{border-bottom:0}
-  .log .sw{width:16px;height:22px;border-radius:1px;flex:none}
-  .log .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .log .sc{color:var(--lamp);font-size:12px;flex:none}
-  .log .has{color:var(--dim);font-size:11px;flex:none}
-  .log button{background:none;border:0;color:var(--dim);font-size:11.5px;text-decoration:underline;flex:none}
-  .log button:hover{color:var(--lamp)}
   .empty{font-size:12.5px;color:var(--dim)}
   .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 
@@ -6155,11 +6143,6 @@ window.addEventListener("message", function (e) {
 
   <div id="detail"></div>
 
-  <div class="logs">
-    <h3>내 기록</h3>
-    <div id="logs"></div>
-  </div>
-
   <p aria-live="polite" class="sr" id="live"></p>
 </div>
 
@@ -6616,7 +6599,6 @@ window.addEventListener("message", function (e) {
        담자마자 안내문이 떠버립니다. 열어야 할 작품이 있으면 그것을 먼저 봅니다. */
     if (!cur) {
       $("detail").innerHTML = EMPTY_HTML;
-      renderLogs();
       return;
     }
     var f = cur, r = R(f.id);
@@ -6685,7 +6667,6 @@ window.addEventListener("message", function (e) {
 
     bindDetail();
     renderComment();
-    renderLogs();
   }
 
   /* 다른 사람의 감상 — TMDB 에 올라온 것 중 100자가 넘는 것만. */
@@ -6835,34 +6816,6 @@ window.addEventListener("message", function (e) {
       e.stopPropagation();
       var rr = R(cur.id); rr.comment=""; rr.spoiler=false; rr.at="";
       save(); renderDetail(); say("코멘트를 지웠습니다.");
-    });
-  }
-
-  // ---------- 내 기록 ----------
-  function renderLogs(){
-    var rows = FILMS.filter(function(f){
-      var r = rec[f.id];
-      return r && (r.score || r.comment || r.status);
-    });
-    if (!rows.length){
-      $("logs").innerHTML = '<p class="empty">아직 기록이 없습니다. 위에서 별점을 눌러보세요.</p>';
-      return;
-    }
-    $("logs").innerHTML = rows.map(function(f){
-      var r = rec[f.id];
-      return '<div class="log">'+
-        '<span class="sw" style="background:'+f.bg+'"></span>'+
-        '<span class="t">'+f.ko+' <span style="color:var(--dim);font-size:11.5px">'+f.year+'</span></span>'+
-        '<span class="sc">'+(r.score?'★ '+r.score.toFixed(1):'—')+'</span>'+
-        '<span class="has">'+(r.status||'')+(r.comment?' · 코멘트':'')+'</span>'+
-        '<button data-open="'+f.id+'">열기</button></div>';
-    }).join("");
-    Array.prototype.forEach.call($("logs").querySelectorAll("[data-open]"), function(b){
-      b.addEventListener("click", function(){
-        cur = FILMS.filter(function(f){ return f.id===b.dataset.open; })[0];
-        renderDetail();
-        window.scrollTo({ top:0, behavior:"smooth" });
-      });
     });
   }
 
@@ -8590,13 +8543,38 @@ window.addEventListener("message", function (e) {
     renderPool(); render(); say("담은 순으로 정렬했습니다.");
   });
   document.getElementById("byscore").addEventListener("click", function(){
+    /* 진열장에는 있는데 이 목록에 아직 없는 작품도 후보에 넣습니다. */
+    try {
+      APP.library.forEach(function (lf) {
+        if (!byId(lf.id)) FILMS.push(lf);
+      });
+    } catch (e) {}
+
+    var cap = capacity();
+    /* 칸이 이미 가득 차 있었다면, 켜둔 작품끼리만 줄 세우는 걸로는 부족합니다.
+       켜지지 않은 작품 중 별점이 더 높은 것이 있어도 못 들어오기 때문입니다.
+       그래서 이때는 서재 전체를 별점순으로 세우고 위에서부터 칸 수만큼 다시 켭니다.
+       일부만 골라둔 상태라면 고른 작품은 그대로 두고 순서만 바꿉니다. */
+    var full = chosen().length >= cap;
+
     var n = FILMS.filter(function(f){ return APP.score(f.id) > 0; }).length;
     order = FILMS.slice().sort(function(a,b){
-      return APP.score(b.id) - APP.score(a.id) || a.rank - b.rank;
+      return APP.score(b.id) - APP.score(a.id) || (a.rank || 0) - (b.rank || 0);
     }).map(function(f){ return f.id; });
-    renderPool(); render();
-    say(n ? "내 별점순으로 정렬했습니다. 평가한 작품 "+n+"편이 앞으로 옵니다."
-          : "아직 별점을 매긴 작품이 없어 순위순과 같습니다. 기록이나 취향 분석에서 매겨보세요.");
+
+    if (full) {
+      ON = {};
+      order.slice(0, cap).forEach(function(id){ ON[id] = true; });
+    }
+
+    var urls = chosen().slice(0, cap).map(function(f){ var md = MED(f); return md && md.poster; }).filter(Boolean);
+    (urls.length ? preloadPosters(urls) : Promise.resolve()).then(function(){
+      renderPool(); render();
+    });
+    say(n ? (full ? "내 별점 높은 순으로 " + Math.min(cap, FILMS.length) + "편을 골라 놓았습니다."
+                  : "내 별점순으로 정렬했습니다.") +
+            " 평가한 작품은 " + n + "편입니다."
+          : "아직 별점을 매긴 작품이 없어 담은 순과 같습니다. 기록이나 취향 분석에서 매겨보세요.");
   });
 
   APP.subscribe("collage", function(){
@@ -12240,16 +12218,6 @@ window.addEventListener("message", function (e) {
     </div>
     <div class="side"><div id="detail"><div class="empty">포스터를 누르면<br>여기에 정보가 나옵니다</div></div></div>
   </div>
-
-  <p class="note">
-    <b>자료</b> — 4대 영화제는 2000년 이후 수상작, 이동진 만점작은 왓챠피디아 별 다섯 개(2026년 4월 기준 146편), 시네필 안내서는 정성일 평론가가
-    2016년 <b>영화천국</b> 48호에 실은 목록입니다.
-    <b>제작비 1억 달러 이상</b>은 TMDB 에 적힌 제작비를 그대로 씁니다. 1985년부터 연도별로
-    훑어 1억 달러를 넘는 개봉작을 전부 담았습니다. 제작비는 공개 의무가 없어 자료마다 값이 다르고
-    TMDB 도 더러 옛 수치나 오기가 섞여 있으니, 순위는 대략의 눈금으로 보시는 편이 좋습니다.
-    표지는 TMDB 에서 제목으로 찾아 가져옵니다.
-    표지를 누르면 정보가 열리고, 거기서 서재에 담을 수 있습니다.
-  </p>
 
   <p aria-live="polite" class="sr" id="live"></p>
 </div>
@@ -18804,15 +18772,15 @@ window.addEventListener("message", function (e) {
           (p.edited !== p.at ? " (수정됨)" : "") + "</p>" +
         '<div class="body">' + esc(p.body) + "</div>" +
         (p.mine ? '<div class="acts">' +
-            '<button data-edit="' + p.id + '">고치기</button>' +
-            '<button data-del="' + p.id + '">지우기</button></div>' : "") +
+            '<button data-edit="' + p.id + '">수정</button>' +
+            '<button data-del="' + p.id + '">삭제</button></div>' : "") +
         "</div>";
       say(p.title + " 글을 열었습니다.");
     });
   }
   function showTimer(){ setTimeout(showList, 900); }
 
-  /* ── 글쓰기 · 고치기 ── */
+  /* ── 글쓰기 · 수정 ── */
   function showForm(pid, title, body){
     $("view").innerHTML =
       '<div class="bar"><button id="back">목록</button></div>' +
@@ -18824,7 +18792,7 @@ window.addEventListener("message", function (e) {
       '<div class="cnt" id="cnt">0 / 4000</div>' +
       '<div class="msg" id="msg"></div>' +
       '<div class="acts"><button class="go" id="save">' +
-        (pid ? "고치기" : "올리기") + "</button></div></div>";
+        (pid ? "수정" : "올리기") + "</button></div></div>";
 
     var bo = $("bo"), cnt = $("cnt");
     function tick(){ cnt.textContent = bo.value.length + " / 4000"; }
@@ -18877,20 +18845,20 @@ window.addEventListener("message", function (e) {
 
     var del = t.closest && t.closest("[data-del]");
     if (del) {
-      /* 두 번 눌러야 지워집니다. 되돌릴 수 없는 동작이라
+      /* 두 번 눌러야 삭제됩니다. 되돌릴 수 없는 동작이라
          한 번에 실행하면 실수로 지우는 일이 생깁니다. */
       if (del.dataset.armed !== "1") {
         del.dataset.armed = "1";
-        del.textContent = "정말 지울까요?";
+        del.textContent = "정말 삭제할까요?";
         setTimeout(function(){
           if (del.dataset.armed === "1") {
-            del.dataset.armed = "0"; del.textContent = "지우기";
+            del.dataset.armed = "0"; del.textContent = "삭제";
           }
         }, 3000);
         return;
       }
       api("/api/posts/" + del.dataset.del, { method:"DELETE" })
-        .then(function(){ say("글을 지웠습니다."); page = 1; showList(); });
+        .then(function(){ say("글을 삭제했습니다."); page = 1; showList(); });
       return;
     }
 
@@ -19938,22 +19906,6 @@ function film(id) { return FILM_BY_ID[id]; }
     if (sc) sc.textContent = "서재 " + APP.library.length + "편";
     /* 설명을 빼고 편수만 남깁니다. */
     $("libState").textContent = APP.library.length ? APP.library.length + "편" : "";
-    var extra = APP.library;
-    $("libList").innerHTML = extra.length
-      ? '<div class="libgrid">' + extra.map(function (f) {
-          return '<span class="libchip">' + f.ko + " " + f.year +
-                 '<button data-del="' + f.id + '" title="빼기">&times;</button></span>';
-        }).join("") + "</div>"
-      : "";
-    Array.prototype.forEach.call($("libList").querySelectorAll("[data-del]"), function (b) {
-      b.addEventListener("click", function () {
-        var id = b.dataset.del;
-        APP.library = APP.library.filter(function (f) { return f.id !== id; });
-        delete APP.media[id];
-        REMOVED[id] = 1;
-        libSave(); libRefresh(); reloadAll();
-      });
-    });
   }
 
   $("seed").addEventListener("click", function () {
